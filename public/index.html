@@ -1,0 +1,798 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>进销存管理系统</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+    
+    * { font-family: 'Inter', sans-serif; }
+    
+    .sidebar-item:hover { background: linear-gradient(90deg, rgba(6, 182, 212, 0.1) 0%, transparent 100%); }
+    .sidebar-item.active { background: rgba(6, 182, 212, 0.1); border-left: 3px solid #06b6d4; }
+    .sidebar-item.active span { color: #0e7490 !important; font-weight: 500; }
+    .sidebar-item {
+      padding: 8px 16px !important;
+      font-size: 13px;
+    }
+    .sidebar-item svg {
+      width: 18px !important;
+      height: 18px !important;
+    }
+    .card-hover:hover { transform: translateY(-2px); box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1); }
+    .btn-primary { background: linear-gradient(135deg, #1e40af 0%, #3b82f6 100%); }
+    .btn-primary:hover { background: linear-gradient(135deg, #1e3a8a 0%, #2563eb 100%); }
+    .status-pending { background: #fef3c7; color: #d97706; }
+    .status-in-progress { background: #dbeafe; color: #2563eb; }
+    .status-completed { background: #d1fae5; color: #059669; }
+    .status-cancelled { background: #fee2e2; color: #dc2626; }
+    .fade-in { animation: fadeIn 0.3s ease-in; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: #f1f5f9; }
+    ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+    
+    ::placeholder { font-size: 12px !important; color: #9ca3af !important; }
+    :-ms-input-placeholder { font-size: 12px !important; color: #9ca3af !important; }
+    ::-ms-input-placeholder { font-size: 12px !important; color: #9ca3af !important; }
+    
+    .sidebar-dropdown {
+      position: relative;
+    }
+    .sidebar-dropdown-menu-wrapper {
+      position: fixed;
+      width: max-content;
+      min-width: 500px;
+      z-index: 9999;
+      pointer-events: none;
+      opacity: 0;
+      visibility: hidden;
+      transition: opacity 0.2s, visibility 0.2s;
+    }
+    .sidebar-dropdown:hover .sidebar-dropdown-menu-wrapper,
+    .sidebar-dropdown-menu-wrapper:hover {
+      pointer-events: auto;
+      opacity: 1;
+      visibility: visible;
+    }
+    .sidebar-dropdown-menu {
+      display: flex;
+      flex-direction: column;
+      background: white;
+      border-radius: 0.5rem;
+      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+      border: 1px solid #e2e8f0;
+      opacity: 0;
+      visibility: hidden;
+      transform: translateX(-10px);
+      transition: all 0.2s ease;
+    }
+    .sidebar-dropdown:hover .sidebar-dropdown-menu {
+      opacity: 1;
+      visibility: visible;
+      transform: translateX(0);
+    }
+    /* 角色分级：非管理员隐藏 "系统管理" 菜单（JS 按当前用户角色切换 body.admin-mode） */
+    .admin-gated { display: block; }
+    body.no-admin .admin-gated { display: none !important; }
+    /* 角色细分权限：无权限的菜单/按钮统一隐藏 */
+    .perm-hidden { display: none !important; }
+    .sidebar-dropdown-tabs {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+    }
+    .sidebar-dropdown-tabs-3 {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+    }
+    .sidebar-dropdown-tabs-2 {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+    }
+    .sidebar-dropdown-tabs-6 {
+      display: grid;
+      grid-template-columns: repeat(6, 1fr);
+    }
+    .sidebar-dropdown-tabs-7 {
+      display: grid;
+      grid-template-columns: repeat(7, 1fr);
+    }
+    .sidebar-dropdown-tab {
+      padding: 8px 12px;
+      color: #64748b;
+      font-size: 13px;
+      cursor: pointer;
+      transition: all 0.2s;
+      border-bottom: 3px solid transparent;
+      border-right: 1px solid #e2e8f0;
+      text-align: center;
+      white-space: nowrap;
+    }
+    .sidebar-dropdown-tab:last-child {
+      border-right: none;
+    }
+    .sidebar-dropdown-tab:hover {
+      color: #0ea5e9;
+    }
+    .sidebar-dropdown-tab.active {
+      color: #0ea5e9;
+      border-bottom-color: #0ea5e9;
+      font-weight: 500;
+    }
+    .sidebar-dropdown-content-wrapper {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      border-top: 1px solid #e2e8f0;
+    }
+    .sidebar-dropdown-content-wrapper-3 {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      border-top: 1px solid #e2e8f0;
+    }
+    .sidebar-dropdown-content-wrapper-2 {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      border-top: 1px solid #e2e8f0;
+    }
+    .sidebar-dropdown-content-wrapper-6 {
+      display: grid;
+      grid-template-columns: repeat(6, 1fr);
+      border-top: 1px solid #e2e8f0;
+    }
+    .sidebar-dropdown-content-wrapper-7 {
+      display: grid;
+      grid-template-columns: repeat(7, 1fr);
+      border-top: 1px solid #e2e8f0;
+    }
+    .sidebar-dropdown-content {
+      padding: 4px 0;
+      border-right: 1px solid #e2e8f0;
+    }
+    .sidebar-dropdown-content:last-child {
+      border-right: none;
+    }
+    .sidebar-dropdown-content-item {
+      padding: 6px 12px;
+      color: #475569;
+      font-size: 13px;
+      cursor: pointer;
+      transition: background 0.2s;
+      white-space: nowrap;
+    }
+    .sidebar-dropdown-content-item:hover {
+      background: rgba(6, 182, 212, 0.1);
+      color: #0ea5e9;
+    }
+    .sidebar-third-level-wrapper {
+      display: flex;
+      flex-direction: column;
+    }
+    .sidebar-third-level-item {
+      border-bottom: 1px solid #e2e8f0;
+    }
+    .sidebar-third-level-item:last-child {
+      border-bottom: none;
+    }
+    .sidebar-third-level-header {
+      padding: 6px 12px;
+      color: #475569;
+      font-size: 13px;
+      cursor: pointer;
+      transition: all 0.2s;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: #f8fafc;
+    }
+    .sidebar-third-level-header:hover {
+      background: rgba(6, 182, 212, 0.1);
+      color: #0ea5e9;
+    }
+    .sidebar-third-level-submenu {
+      display: flex;
+      flex-direction: column;
+      padding: 4px 0;
+    }
+    .sidebar-third-level-submenu.hidden {
+      display: none;
+    }
+  </style>
+</head>
+<body class="bg-slate-50">
+  <div id="app" class="flex h-screen overflow-hidden">
+    <aside class="w-44 bg-white border-r border-slate-200 flex flex-col">
+      <div class="p-3 border-b border-slate-200">
+        <div class="flex items-center gap-3">
+          <div class="w-8 h-8 bg-gradient-to-br from-blue-600 to-blue-400 rounded-lg flex items-center justify-center">
+            <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/>
+            </svg>
+          </div>
+          <div>
+            <h1 id="system-title" class="text-sm font-bold text-slate-800 whitespace-nowrap">进销存系统</h1>
+            <p id="system-version" class="text-xs text-slate-500">全栈版本</p>
+          </div>
+        </div>
+      </div>
+      
+      <nav class="flex-1 p-2 space-y-0.5 overflow-y-auto">
+        <div class="sidebar-item px-3 py-2 rounded-lg cursor-pointer flex items-center gap-2 transition-all" data-page="dashboard" onclick="navigateTo('dashboard')">
+          <svg class="w-5 h-5 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z"/>
+          </svg>
+          <span class="text-slate-600">仪表盘</span>
+        </div>
+        
+        <div class="sidebar-dropdown" id="sales-dropdown">
+          <div class="sidebar-item px-3 py-2 rounded-lg cursor-pointer flex items-center gap-2 transition-all" data-page="sales">
+            <svg class="w-5 h-5 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z"/>
+            </svg>
+            <span class="text-slate-600">销售管理</span>
+            <svg class="w-4 h-4 text-slate-500 ml-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+            </svg>
+          </div>
+          
+          <div class="sidebar-dropdown-menu-wrapper" id="sales-dropdown-menu-wrapper">
+            <div class="sidebar-dropdown-menu">
+              <div class="sidebar-dropdown-tabs">
+                <div class="sidebar-dropdown-tab">销售订单</div>
+                <div class="sidebar-dropdown-tab">发货收单</div>
+                <div class="sidebar-dropdown-tab">售后服务</div>
+              </div>
+              <div class="sidebar-dropdown-content-wrapper">
+                <div class="sidebar-dropdown-content">
+                  <div class="sidebar-dropdown-content-item" onclick="salesSubTab='create'; saveSalesSubTab('create'); navigateTo('sales');">创建销售订单</div>
+                  <div class="sidebar-dropdown-content-item" onclick="salesSubTab='pending'; saveSalesSubTab('pending'); navigateTo('sales');">待审核订单</div>
+                  <div class="sidebar-dropdown-content-item" onclick="salesSubTab='list'; saveSalesSubTab('list'); navigateTo('sales');">销售订单列表</div>
+                  <div class="sidebar-dropdown-content-item">批量导入</div>
+                </div>
+                <div class="sidebar-dropdown-content">
+                  <div class="sidebar-dropdown-content-item" onclick="salesSubTab='sales-shipping'; saveSalesSubTab('sales-shipping'); navigateTo('sales');">按产品发货</div>
+                  <div class="sidebar-dropdown-content-item" onclick="salesSubTab='sales-order-shipping'; saveSalesSubTab('sales-order-shipping'); navigateTo('sales');">按订单发货</div>
+                  <div class="sidebar-dropdown-content-item" onclick="salesSubTab='shipped'; saveSalesSubTab('shipped'); navigateTo('sales');">已发货列表</div>
+                  <div class="sidebar-dropdown-content-item">收单</div>
+                </div>
+                <div class="sidebar-dropdown-content">
+                  <div class="sidebar-dropdown-content-item" onclick="salesSubTab='sales-after-sales'; saveSalesSubTab('sales-after-sales'); navigateTo('sales');">退换货处理</div>
+                  <div class="sidebar-dropdown-content-item">维修服务</div>
+                  <div class="sidebar-dropdown-content-item">投诉处理</div>
+                  <div class="sidebar-dropdown-content-item">售后记录</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        
+        <div class="sidebar-dropdown" id="production-dropdown">
+          <div class="sidebar-item px-3 py-2 rounded-lg cursor-pointer flex items-center gap-2 transition-all" data-page="production">
+            <svg class="w-5 h-5 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z"/>
+            </svg>
+            <span class="text-slate-600">生产管理</span>
+            <svg class="w-4 h-4 text-slate-500 ml-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+            </svg>
+          </div>
+          
+          <div class="sidebar-dropdown-menu-wrapper" id="production-dropdown-menu-wrapper">
+            <div class="sidebar-dropdown-menu">
+              <div class="sidebar-dropdown-tabs">
+                <div class="sidebar-dropdown-tab">计划订单</div>
+                <div class="sidebar-dropdown-tab">排产</div>
+                <div class="sidebar-dropdown-tab">完工确认</div>
+                <div class="sidebar-dropdown-tab">看板管理</div>
+              </div>
+              <div class="sidebar-dropdown-content-wrapper">
+                <div class="sidebar-dropdown-content">
+                  <div class="sidebar-dropdown-content-item" onclick="productionSubPage='create'; navigateTo('production');">创建计划订单</div>
+                  <div class="sidebar-dropdown-content-item" onclick="showPlanOrders()">计划订单列表</div>
+                  <div class="sidebar-dropdown-content-item" onclick="productionSubPage='list'; navigateTo('production');">计划订单导入</div>
+                </div>
+                <div class="sidebar-dropdown-content">
+                  <div class="sidebar-dropdown-content-item" onclick="productionSubPage='scheduling'; navigateTo('production');">安排生产</div>
+                  <div class="sidebar-dropdown-content-item" onclick="productionSubPage='dispatch'; navigateTo('production');">派工</div>
+                  <div class="sidebar-dropdown-content-item" onclick="productionSubPage='stop'; navigateTo('production');">中止生产</div>
+                  <div class="sidebar-dropdown-content-item" onclick="productionSubPage='scheduling'; navigateTo('production');">入通用库</div>
+                  <div class="sidebar-dropdown-content-item" onclick="productionSubPage='scheduling'; navigateTo('production');">调换货</div>
+                </div>
+                <div class="sidebar-dropdown-content">
+                  <div class="sidebar-dropdown-content-item" onclick="productionSubPage='completion-by-order'; navigateTo('production');">按单确认</div>
+                  <div class="sidebar-dropdown-content-item" onclick="productionSubPage='completion-by-staff'; navigateTo('production');">按员工确认</div>
+                  <div class="sidebar-dropdown-content-item" onclick="productionSubPage='completion-cancel'; navigateTo('production');">取消完工确认</div>
+                </div>
+                <div class="sidebar-dropdown-content">
+                  <div class="sidebar-dropdown-content-item" onclick="showProductionBoard()">生产看板</div>
+                  <div class="sidebar-dropdown-content-item" onclick="productionSubPage='kanban'; navigateTo('production');">实时监控</div>
+                  <div class="sidebar-dropdown-content-item" onclick="productionSubPage='kanban'; navigateTo('production');">数据统计</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        
+        <div class="sidebar-dropdown" id="purchase-dropdown">
+          <div class="sidebar-item px-3 py-2 rounded-lg cursor-pointer flex items-center gap-2 transition-all" data-page="purchase">
+            <svg class="w-5 h-5 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z"/>
+            </svg>
+            <span class="text-slate-600">采购管理</span>
+            <svg class="w-4 h-4 text-slate-500 ml-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+            </svg>
+          </div>
+          
+          <div class="sidebar-dropdown-menu-wrapper" id="purchase-dropdown-menu-wrapper">
+            <div class="sidebar-dropdown-menu">
+              <div class="sidebar-dropdown-tabs">
+                <div class="sidebar-dropdown-tab">材料审核</div>
+                <div class="sidebar-dropdown-tab">采购单</div>
+                <div class="sidebar-dropdown-tab">材料收货</div>
+                <div class="sidebar-dropdown-tab">成品收货</div>
+                <div class="sidebar-dropdown-tab">退货</div>
+              </div>
+              <div class="sidebar-dropdown-content-wrapper">
+                <div class="sidebar-dropdown-content">
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('purchase'); renderPurchaseBom();">BOM-按配置</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('purchase'); renderPurchaseBom();">订单用料核对</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('purchase'); renderPurchaseBom();">订单材料用量表</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('purchase'); renderPurchaseBom();">库存消耗记录</div>
+                </div>
+                <div class="sidebar-dropdown-content">
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('purchase'); renderPurchaseOrder();">创建采购单</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('purchase'); renderPurchaseOrder();">采购单列表</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('purchase'); renderPurchaseOrder();">采购单导入</div>
+                </div>
+                <div class="sidebar-dropdown-content">
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('purchase'); renderPurchaseReceive();">无采购单收货</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('purchase'); renderPurchaseReceive();">收货单查询</div>
+                </div>
+                <div class="sidebar-dropdown-content">
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('purchase'); renderPurchaseReceiveProduct();">无采购单收货</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('purchase'); renderPurchaseReceiveProduct();">收货单查询</div>
+                </div>
+                <div class="sidebar-dropdown-content">
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('purchase'); renderPurchaseReturn();">材料退货</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('purchase'); renderPurchaseReturn();">退料单查询</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('purchase'); renderPurchaseReturn();">成品退货</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('purchase'); renderPurchaseReturn();">成品退货查询</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        
+        <div class="sidebar-dropdown" id="inventory-dropdown">
+          <div class="sidebar-item px-3 py-2 rounded-lg cursor-pointer flex items-center gap-2 transition-all" data-page="inventory">
+            <svg class="w-5 h-5 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"/>
+            </svg>
+            <span class="text-slate-600">库存管理</span>
+            <svg class="w-4 h-4 text-slate-500 ml-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+            </svg>
+          </div>
+          
+          <div class="sidebar-dropdown-menu-wrapper" id="inventory-dropdown-menu-wrapper">
+            <div class="sidebar-dropdown-menu">
+              <div class="sidebar-dropdown-tabs sidebar-dropdown-tabs-3">
+                <div class="sidebar-dropdown-tab">产品库存</div>
+                <div class="sidebar-dropdown-tab">材料库存</div>
+                <div class="sidebar-dropdown-tab">变更</div>
+              </div>
+              <div class="sidebar-dropdown-content-wrapper sidebar-dropdown-content-wrapper-3">
+                <div class="sidebar-dropdown-content">
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('inventory'); renderInventoryProductInForm();">手动入库</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('inventory'); switchInventoryTab('product-stock-query');">产品库存查询</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('inventory'); renderInventoryProduct();">产品出入库查询</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('inventory'); renderInventoryProduct();">库存统计</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('inventory'); renderInventoryProduct();">盘点库存清单</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('inventory'); renderInventoryProduct();">打印产品库存标签</div>
+                </div>
+                <div class="sidebar-dropdown-content">
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('inventory'); renderInventoryMaterial();">材料库存查询</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('inventory'); renderInventoryMaterial();">材料入库凭证查询</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('inventory'); renderInventoryMaterial();">材料出库凭证查询</div>
+                </div>
+                <div class="sidebar-dropdown-content">
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('inventory'); renderInventoryChange();">手动入库</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('inventory'); renderInventoryChange();">批量导入</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('inventory'); renderInventoryChange();">材料领用</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('inventory'); renderInventoryChange();">按订单领料</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('inventory'); renderInventoryChange();">领料单查询</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('inventory'); renderInventoryChange();">材料移库</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('inventory'); renderInventoryChange();">变更凭证查询</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        
+        <div class="sidebar-dropdown" id="finance-dropdown">
+          <div class="sidebar-item px-3 py-2 rounded-lg cursor-pointer flex items-center gap-2 transition-all" data-page="finance">
+            <svg class="w-5 h-5 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+            </svg>
+            <span class="text-slate-600">财务管理</span>
+            <svg class="w-4 h-4 text-slate-500 ml-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+            </svg>
+          </div>
+          
+          <div class="sidebar-dropdown-menu-wrapper" id="finance-dropdown-menu-wrapper">
+            <div class="sidebar-dropdown-menu">
+              <div class="sidebar-dropdown-tabs">
+                <div class="sidebar-dropdown-tab">应收款</div>
+                <div class="sidebar-dropdown-tab">应付款</div>
+                <div class="sidebar-dropdown-tab">资金管理</div>
+                <div class="sidebar-dropdown-tab">成本管理</div>
+                <div class="sidebar-dropdown-tab">财务账户</div>
+              </div>
+              <div class="sidebar-dropdown-content-wrapper">
+                <div class="sidebar-dropdown-content">
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('finance'); renderFinanceReceivable();">客户预收款</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('finance'); renderFinanceReceivable();">预收款退款</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('finance'); renderFinanceReceivable();">预收款查询</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('finance'); renderFinanceReceivable();">预收款退款查询</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('finance'); renderFinanceReceivable();">按单收款</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('finance'); renderFinanceReceivable();">月结收款</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('finance'); renderFinanceReceivable();">按客户收款</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('finance'); renderFinanceReceivable();">收款查询</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('finance'); renderFinanceReceivable();">按单退款</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('finance'); renderFinanceReceivable();">退款查询</div>
+                </div>
+                <div class="sidebar-dropdown-content">
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('finance'); renderFinancePayable();">采购预付款</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('finance'); renderFinancePayable();">预付款查询</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('finance'); renderFinancePayable();">按单付款</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('finance'); renderFinancePayable();">月结付款</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('finance'); renderFinancePayable();">采购付款查询</div>
+                </div>
+                <div class="sidebar-dropdown-content">
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('finance'); renderFinanceFund();">费用单</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('finance'); renderFinanceFund();">费用单查询</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('finance'); renderFinanceFund();">其他收入</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('finance'); renderFinanceFund();">其他收入查询</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('finance'); renderFinanceFund();">内部转账</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('finance'); renderFinanceFund();">内部转账查询</div>
+                </div>
+                <div class="sidebar-dropdown-content">
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('finance'); renderFinanceCost();">管理成本</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('finance'); renderFinanceCost();">订单利润</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('finance'); renderFinanceCost();">员工工资</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('finance'); renderFinanceCost();">工资增减项</div>
+                </div>
+                <div class="sidebar-dropdown-content">
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('finance'); renderFinanceAccount();">公司资金账户</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('finance'); renderFinanceAccount();">客户资金账户</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('finance'); renderFinanceAccount();">供应商资金账户</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        
+        <div class="sidebar-dropdown" id="reports-dropdown">
+          <div class="sidebar-item px-3 py-2 rounded-lg cursor-pointer flex items-center gap-2 transition-all" data-page="reports">
+            <svg class="w-5 h-5 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+            </svg>
+            <span class="text-slate-600">报表管理</span>
+            <svg class="w-4 h-4 text-slate-500 ml-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+            </svg>
+          </div>
+          
+          <div class="sidebar-dropdown-menu-wrapper" id="reports-dropdown-menu-wrapper">
+            <div class="sidebar-dropdown-menu">
+              <div class="sidebar-dropdown-tabs sidebar-dropdown-tabs-6">
+                <div class="sidebar-dropdown-tab">销量管理</div>
+                <div class="sidebar-dropdown-tab">生产管理</div>
+                <div class="sidebar-dropdown-tab">库存管理</div>
+                <div class="sidebar-dropdown-tab">采购管理</div>
+                <div class="sidebar-dropdown-tab">财务管理</div>
+                <div class="sidebar-dropdown-tab">排名</div>
+              </div>
+              <div class="sidebar-dropdown-content-wrapper sidebar-dropdown-content-wrapper-6">
+                <div class="sidebar-dropdown-content">
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('reports'); renderReportsSales();">经营报表</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('reports'); renderReportsSales();">订单状态查询</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('reports'); renderReportsSales();">客户下单日报表</div>
+                </div>
+                <div class="sidebar-dropdown-content">
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('reports'); renderReportsProduction();">工序产量统计</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('reports'); renderReportsProduction();">生产月报表</div>
+                </div>
+                <div class="sidebar-dropdown-content">
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('reports'); renderReportsInventory();">产品入库明细表</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('reports'); renderReportsInventory();">产品出库明细表</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('reports'); renderReportsInventory();">成品月度统计表</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('reports'); renderReportsInventory();">月度材料进销存报表</div>
+                </div>
+                <div class="sidebar-dropdown-content">
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('reports'); renderReportsPurchase();">供应商供货柱状图</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('reports'); renderReportsPurchase();">供应商未付款</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('reports'); renderReportsPurchase();">供应商采购金额</div>
+                </div>
+                <div class="sidebar-dropdown-content">
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('reports'); renderReportsFinance();">收支报表</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('reports'); renderReportsFinance();">资金月报表</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('reports'); renderReportsFinance();">资金日报表</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('reports'); renderReportsFinance();">客户收款汇总表</div>
+                </div>
+                <div class="sidebar-dropdown-content">
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('reports'); renderReportsRanking();">产品订货排名</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('reports'); renderReportsRanking();">产品发货排名</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('reports'); renderReportsRanking();">客户订货排名</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('reports'); renderReportsRanking();">客户发货排名</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('reports'); renderReportsRanking();">供应商采购排名</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('reports'); renderReportsRanking();">材料采购排名</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        
+        <div class="sidebar-dropdown" id="settings-dropdown">
+          <div class="sidebar-item px-3 py-2 rounded-lg cursor-pointer flex items-center gap-2 transition-all" data-page="settings">
+            <svg class="w-5 h-5 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+            </svg>
+            <span class="text-slate-600">系统设置</span>
+            <svg class="w-4 h-4 text-slate-500 ml-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+            </svg>
+          </div>
+          
+          <div class="sidebar-dropdown-menu-wrapper" id="settings-dropdown-menu-wrapper">
+            <div class="sidebar-dropdown-menu">
+              <div class="sidebar-dropdown-tabs sidebar-dropdown-tabs-2">
+                <div class="sidebar-dropdown-tab">参数设置</div>
+                <div class="sidebar-dropdown-tab">产品属性</div>
+              </div>
+              <div class="sidebar-dropdown-content-wrapper sidebar-dropdown-content-wrapper-2">
+                <div class="sidebar-dropdown-content">
+                  <div class="sidebar-dropdown-content-item" onclick="settingsSubPage='params'; saveSettingsSubPage('params'); navigateTo('settings');">参数设置</div>
+                  <div class="sidebar-dropdown-content-item" onclick="settingsSubPage='company'; saveSettingsSubPage('company'); navigateTo('settings');">企业设置</div>
+                </div>
+                <div class="sidebar-dropdown-content">
+                  <div class="sidebar-dropdown-content-item" onclick="settingsSubPage='product'; saveSettingsSubPage('product'); navigateTo('settings');">产品属性</div>
+                  <div class="sidebar-dropdown-content-item" onclick="settingsSubPage='dataSource'; saveSettingsSubPage('dataSource'); navigateTo('settings');">数据源</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        
+        <div class="sidebar-dropdown" id="materials-dropdown">
+          <div class="sidebar-item px-3 py-2 rounded-lg cursor-pointer flex items-center gap-2 transition-all" data-page="materials">
+            <svg class="w-5 h-5 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/>
+            </svg>
+            <span class="text-slate-600">资料管理</span>
+            <svg class="w-4 h-4 text-slate-500 ml-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+            </svg>
+          </div>
+          
+          <div class="sidebar-dropdown-menu-wrapper" id="materials-dropdown-menu-wrapper">
+            <div class="sidebar-dropdown-menu">
+              <div class="sidebar-dropdown-tabs sidebar-dropdown-tabs-7">
+                <div class="sidebar-dropdown-tab">仓库资料</div>
+                <div class="sidebar-dropdown-tab">产品资料</div>
+                <div class="sidebar-dropdown-tab">材料资料</div>
+                <div class="sidebar-dropdown-tab">客户资料</div>
+                <div class="sidebar-dropdown-tab">供应商资料</div>
+                <div class="sidebar-dropdown-tab">物流资料</div>
+                <div class="sidebar-dropdown-tab">产品成本</div>
+              </div>
+              <div class="sidebar-dropdown-content-wrapper sidebar-dropdown-content-wrapper-7">
+                <div class="sidebar-dropdown-content">
+                  <div class="sidebar-dropdown-content-item" onclick="materialsSubPage='warehouse-create'; navigateTo('materials');">新增仓库</div>
+                  <div class="sidebar-dropdown-content-item" onclick="materialsSubPage='warehouse-list'; navigateTo('materials');">仓库清单</div>
+                  <div class="sidebar-dropdown-content-item" onclick="materialsSubPage='warehouse-location'; navigateTo('materials');">仓位清单</div>
+                </div>
+                <div class="sidebar-dropdown-content">
+                  <div class="sidebar-dropdown-content-item" onclick="materialsSubPage='product-config'; navigateTo('materials');">配置项维护</div>
+                  <div class="sidebar-dropdown-content-item" onclick="materialsSubPage='product-create'; navigateTo('materials');">新增产品</div>
+                  <div class="sidebar-dropdown-content-item" onclick="materialsSubPage='product-list'; navigateTo('materials');">产品清单</div>
+                  <div class="sidebar-dropdown-content-item" onclick="materialsSubPage='product-spec-price'; navigateTo('materials');">规格价格管理</div>
+                  <div class="sidebar-dropdown-content-item" onclick="materialsSubPage='product-quote'; navigateTo('materials');">报价单</div>
+                </div>
+                <div class="sidebar-dropdown-content">
+                  <div class="sidebar-dropdown-content-item" onclick="materialsSubPage='material-create'; navigateTo('materials');">单个新增</div>
+                  <div class="sidebar-dropdown-content-item" onclick="materialsSubPage='material-import'; navigateTo('materials');">批量导入</div>
+                  <div class="sidebar-dropdown-content-item" onclick="materialsSubPage='material-list'; navigateTo('materials');">材料清单</div>
+                </div>
+                <div class="sidebar-dropdown-content">
+                  <div class="sidebar-dropdown-content-item" onclick="materialsSubPage='customer-create'; navigateTo('materials');">单个新增</div>
+                  <div class="sidebar-dropdown-content-item" onclick="materialsSubPage='customer-import'; navigateTo('materials');">批量导入</div>
+                  <div class="sidebar-dropdown-content-item" onclick="materialsSubPage='customer-list'; navigateTo('materials');">客户清单</div>
+                </div>
+                <div class="sidebar-dropdown-content">
+                  <div class="sidebar-dropdown-content-item" onclick="materialsSubPage='supplier-create'; navigateTo('materials');">单个新增</div>
+                  <div class="sidebar-dropdown-content-item" onclick="materialsSubPage='supplier-import'; navigateTo('materials');">批量导入</div>
+                  <div class="sidebar-dropdown-content-item" onclick="materialsSubPage='supplier-list'; navigateTo('materials');">供应商清单</div>
+                </div>
+                <div class="sidebar-dropdown-content">
+                  <div class="sidebar-dropdown-content-item" onclick="materialsSubPage='logistics-create'; navigateTo('materials');">单个新增</div>
+                  <div class="sidebar-dropdown-content-item" onclick="materialsSubPage='logistics-import'; navigateTo('materials');">批量导入</div>
+                  <div class="sidebar-dropdown-content-item" onclick="materialsSubPage='logistics-list'; navigateTo('materials');">物流清单</div>
+                </div>
+                <div class="sidebar-dropdown-content">
+                  <div class="sidebar-dropdown-content-item" onclick="materialsSubPage='cost-import'; navigateTo('materials');">导入产品成本</div>
+                  <div class="sidebar-dropdown-content-item" onclick="materialsSubPage='cost-create'; navigateTo('materials');">新增产品成本</div>
+                  <div class="sidebar-dropdown-content-item" onclick="materialsSubPage='cost-list'; navigateTo('materials');">产品成本清单</div>
+                  <div class="sidebar-dropdown-content-item" onclick="materialsSubPage='cost-price'; navigateTo('materials');">产品售价计算</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        
+        <div class="sidebar-dropdown admin-gated" id="admin-dropdown">
+          <div class="sidebar-item px-3 py-2 rounded-lg cursor-pointer flex items-center gap-2 transition-all" data-page="admin">
+            <svg class="w-5 h-5 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+            </svg>
+            <span class="text-slate-600">系统管理</span>
+            <svg class="w-4 h-4 text-slate-500 ml-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+            </svg>
+          </div>
+          
+          <div class="sidebar-dropdown-menu-wrapper" id="admin-dropdown-menu-wrapper">
+            <div class="sidebar-dropdown-menu">
+              <div class="sidebar-dropdown-tabs sidebar-dropdown-tabs-2">
+                <div class="sidebar-dropdown-tab">系统管理</div>
+                <div class="sidebar-dropdown-tab">系统设置</div>
+              </div>
+              <div class="sidebar-dropdown-content-wrapper sidebar-dropdown-content-wrapper-2">
+                <div class="sidebar-dropdown-content">
+                  <div class="sidebar-dropdown-content-item" onclick="adminSubPage='user'; saveAdminSubPage('user'); navigateTo('admin');">用户管理</div>
+                  <div class="sidebar-dropdown-content-item" onclick="adminSubPage='role'; saveAdminSubPage('role'); navigateTo('admin');">角色管理</div>
+                  <div class="sidebar-dropdown-content-item" onclick="adminSubPage='data'; saveAdminSubPage('data'); navigateTo('admin');">删除数据管理</div>
+                </div>
+                <div class="sidebar-dropdown-content">
+                  <div class="sidebar-dropdown-content-item" onclick="adminSubPage='settings'; saveAdminSubPage('settings'); navigateTo('admin');">系统参数设置</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </nav>
+      
+      <div class="p-3 border-t border-slate-200 mt-auto">
+        <div class="flex items-center gap-2">
+          <div id="footer-avatar" class="w-8 h-8 bg-gradient-to-br from-slate-600 to-slate-400 rounded-full flex items-center justify-center text-white font-medium text-sm">M</div>
+          <div class="flex-1 min-w-0">
+            <p id="footer-name" class="text-sm font-medium text-slate-800 truncate">铭琦</p>
+            <p id="footer-phone" class="text-xs text-slate-500 truncate">18925968540</p>
+          </div>
+          <button onclick="showFooterEditModal()" class="p-1 hover:bg-slate-100 rounded-lg transition-colors">
+            <svg class="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+    </aside>
+    
+    <main class="flex-1 flex flex-col overflow-hidden">
+      <header class="bg-white border-b border-slate-200 px-6 py-3">
+        <div class="flex items-center justify-between">
+          <div>
+            <h2 id="page-title" class="text-sm font-semibold text-slate-800">仪表盘</h2>
+            <p class="text-xs text-slate-500" id="page-subtitle">全栈进销存管理系统 - 数据由后端提供</p>
+          </div>
+          <div class="flex items-center gap-3">
+            <div class="flex items-center gap-2 cursor-pointer hover:bg-slate-50 rounded-lg px-2 py-1" onclick="showUserInfoModal()">
+              <div id="user-avatar" class="w-8 h-8 bg-gradient-to-br from-teal-500 to-cyan-500 rounded-full flex items-center justify-center text-white font-medium text-sm">A</div>
+              <div class="flex-1 min-w-0">
+                <p id="user-name" class="text-sm font-medium text-slate-800 truncate">管理员</p>
+                <p id="user-email" class="text-xs text-slate-500 truncate">admin@example.com</p>
+              </div>
+            </div>
+            <button onclick="handleLogout()" class="px-3 py-1.5 text-sm text-slate-600 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors flex items-center gap-1.5 border border-slate-200 hover:border-red-200">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/>
+              </svg>
+              <span>退出</span>
+            </button>
+          </div>
+        </div>
+      </header>
+      
+      <div id="page-content" class="flex-1 overflow-y-auto p-6"></div>
+    </main>
+  </div>
+  
+  <div id="modal" class="fixed inset-0 bg-black/50 hidden flex items-center justify-center z-50">
+    <div id="modal-content" class="bg-white rounded-xl shadow-2xl max-w-lg w-full mx-4 max-h-[90vh] overflow-y-auto fade-in"></div>
+  </div>
+
+  <script>
+    document.getElementById('sales-dropdown').addEventListener('mouseenter', function() {
+      const wrapper = document.getElementById('sales-dropdown-menu-wrapper');
+      const dropdown = document.getElementById('sales-dropdown');
+      const rect = dropdown.getBoundingClientRect();
+      wrapper.style.top = rect.top + 'px';
+      wrapper.style.left = rect.right + 'px';
+    });
+    
+    document.getElementById('production-dropdown').addEventListener('mouseenter', function() {
+      const wrapper = document.getElementById('production-dropdown-menu-wrapper');
+      const dropdown = document.getElementById('production-dropdown');
+      const rect = dropdown.getBoundingClientRect();
+      wrapper.style.top = rect.top + 'px';
+      wrapper.style.left = rect.right + 'px';
+    });
+    
+    document.getElementById('purchase-dropdown').addEventListener('mouseenter', function() {
+      const wrapper = document.getElementById('purchase-dropdown-menu-wrapper');
+      const dropdown = document.getElementById('purchase-dropdown');
+      const rect = dropdown.getBoundingClientRect();
+      wrapper.style.top = rect.top + 'px';
+      wrapper.style.left = rect.right + 'px';
+    });
+    
+    document.getElementById('inventory-dropdown').addEventListener('mouseenter', function() {
+      const wrapper = document.getElementById('inventory-dropdown-menu-wrapper');
+      const dropdown = document.getElementById('inventory-dropdown');
+      const rect = dropdown.getBoundingClientRect();
+      wrapper.style.top = rect.top + 'px';
+      wrapper.style.left = rect.right + 'px';
+    });
+    
+    document.getElementById('finance-dropdown').addEventListener('mouseenter', function() {
+      const wrapper = document.getElementById('finance-dropdown-menu-wrapper');
+      const dropdown = document.getElementById('finance-dropdown');
+      const rect = dropdown.getBoundingClientRect();
+      wrapper.style.top = rect.top + 'px';
+      wrapper.style.left = rect.right + 'px';
+    });
+    
+    document.getElementById('reports-dropdown').addEventListener('mouseenter', function() {
+      const wrapper = document.getElementById('reports-dropdown-menu-wrapper');
+      const dropdown = document.getElementById('reports-dropdown');
+      const rect = dropdown.getBoundingClientRect();
+      wrapper.style.top = rect.top + 'px';
+      wrapper.style.left = rect.right + 'px';
+    });
+    
+    document.getElementById('admin-dropdown').addEventListener('mouseenter', function() {
+      const wrapper = document.getElementById('admin-dropdown-menu-wrapper');
+      const dropdown = document.getElementById('admin-dropdown');
+      const rect = dropdown.getBoundingClientRect();
+      wrapper.style.top = rect.top + 'px';
+      wrapper.style.left = rect.right + 'px';
+    });
+    
+    document.getElementById('settings-dropdown').addEventListener('mouseenter', function() {
+      const wrapper = document.getElementById('settings-dropdown-menu-wrapper');
+      const dropdown = document.getElementById('settings-dropdown');
+      const rect = dropdown.getBoundingClientRect();
+      wrapper.style.top = rect.top + 'px';
+      wrapper.style.left = rect.right + 'px';
+    });
+    
+    document.getElementById('materials-dropdown').addEventListener('mouseenter', function() {
+      const wrapper = document.getElementById('materials-dropdown-menu-wrapper');
+      const dropdown = document.getElementById('materials-dropdown');
+      const rect = dropdown.getBoundingClientRect();
+      wrapper.style.top = rect.top + 'px';
+      wrapper.style.left = rect.right + 'px';
+    });
+  </script>
+
+  <script src="perm-core.js?v=2026061701"></script>
+  <script src="app.js?v=2026061702"></script>
+  <script src="delivery.js?v=2026061501"></script>
+</body>
+</html>

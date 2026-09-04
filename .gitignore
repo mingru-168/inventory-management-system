@@ -1,0 +1,62 @@
+# ---- 依赖 ----
+node_modules/
+
+# ---- 运行时数据 / 日志 ----
+server/data.json
+server/sessions.json
+server/backups/
+*.log
+npm-debug.log*
+
+# ---- 数据库文件（含敏感数据，勿提交）----
+server/*.db
+server/*.db-shm
+server/*.db-wal
+server/*.sqlite
+server/*.sqlite3
+server/database/
+server/erp.db*
+
+# ---- 系统 / 编辑器 ----
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# ---- 历史遗留的旧版入口文件（已被 public/ 取代）----
+/app.js
+/index.html
+/.auth.js
+
+# ---- 根目录一次性调试/修复脚本（历史遗留，勿提交）----
+fix_*.py
+fix_*.js
+check_*.py
+check_lines.py
+check_units.py
+count_backticks.py
+count_backticks_simple.py
+find_double_quotes.py
+find_error.py
+find_error2.py
+find_error3.py
+find_unclosed.py
+smart_fix.py
+remove_consolelogs.py
+find_and_fix.py
+test_login.py
+
+# ---- server 下一次性脚本 / 备用 sqlite 实现（历史遗留，勿提交）----
+server/check_*.js
+server/fix_database_schema.js
+server/import_data.js
+server/migrate*.js
+server/rebuild_tables.js
+server/restore_stock_data*.js
+server/update_*.js
+server/add_missing_columns.js
+server/db.js
+server/db_sqlite.js
+server/index_mysql.js
+server/index_sqlite.js
