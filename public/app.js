@@ -15658,6 +15658,10 @@ function renderAdmin() {
     renderAdminData();
   } else if (adminSubPage === 'settings') {
     renderAdminSettings();
+  } else if (adminSubPage === 'auditLog') {
+    renderAdminAuditLog();
+  } else if (adminSubPage === 'backup') {
+    renderAdminBackup();
   } else {
     renderAdminUser();
   }
@@ -16646,6 +16650,171 @@ function saveAdminSettings() {
     </div>
   `;
   document.body.appendChild(modal);
+}
+
+// ===== 系统管理：操作日志 =====
+let auditLogPage = 1;
+let auditLogQuery = { operator: '', q: '', action: '', start: '', end: '' };
+async function renderAdminAuditLog() {
+  document.getElementById('page-title').textContent = '操作日志';
+  document.getElementById('page-subtitle').textContent = '按操作人、时间、内容筛选审计记录';
+  const container = document.getElementById('page-content');
+  if (!container) return;
+
+  let payload = { success: false, total: 0, page: 1, pageCount: 1, logs: [] };
+  const params = new URLSearchParams({ page: auditLogPage });
+  params.set('pageSize', '30');
+  if (auditLogQuery.operator) params.set('operator', auditLogQuery.operator);
+  if (auditLogQuery.q) params.set('q', auditLogQuery.q);
+  if (auditLogQuery.action) params.set('action', auditLogQuery.action);
+  if (auditLogQuery.start) params.set('start', auditLogQuery.start);
+  if (auditLogQuery.end) params.set('end', auditLogQuery.end);
+  try {
+    const res = await fetch('/api/audit-logs?' + params.toString());
+    if (res.ok) payload = await res.json();
+  } catch (e) { /* ignore */ }
+
+  const rows = (payload.logs || []).map(l => `
+    <tr class="border-b border-slate-100 hover:bg-slate-50">
+      <td class="px-4 py-2.5 whitespace-nowrap text-slate-600">${esc((l.createdAt || '').replace('T', ' ').slice(0, 19))}</td>
+      <td class="px-4 py-2.5 text-slate-700 font-medium whitespace-nowrap">${esc(l.action || '')}</td>
+      <td class="px-4 py-2.5 text-slate-600">${esc(l.detail || '')}</td>
+      <td class="px-4 py-2.5 text-slate-500 whitespace-nowrap">${esc(l.operator || '')}</td>
+    </tr>`).join('');
+
+  const pageBtns = [];
+  for (let p = 1; p <= payload.pageCount; p++) {
+    pageBtns.push(`<button onclick="auditLogGoPage(${p})" class="px-2.5 py-1 rounded text-xs ${p === payload.page ? 'bg-teal-500 text-white' : 'border border-slate-300 hover:bg-slate-50'}">${p}</button>`);
+  }
+
+  container.innerHTML = `
+    <div class="fade-in text-xs">
+      <div class="bg-white rounded-xl shadow-sm overflow-hidden mb-4">
+        <div class="p-4 grid grid-cols-1 md:grid-cols-5 gap-3 items-end">
+          <div>
+            <label class="block text-slate-600 font-medium mb-1">操作人</label>
+            <input id="al-op" value="${esc(auditLogQuery.operator)}" onkeydown="if(event.key==='Enter')auditLogSearch()" class="w-full px-3 py-1.5 border rounded-lg" placeholder="操作人">
+          </div>
+          <div>
+            <label class="block text-slate-600 font-medium mb-1">内容关键字</label>
+            <input id="al-q" value="${esc(auditLogQuery.q)}" onkeydown="if(event.key==='Enter')auditLogSearch()" class="w-full px-3 py-1.5 border rounded-lg" placeholder="动作/详情">
+          </div>
+          <div>
+            <label class="block text-slate-600 font-medium mb-1">开始日期</label>
+            <input type="date" id="al-start" value="${esc(auditLogQuery.start)}" class="w-full px-3 py-1.5 border rounded-lg">
+          </div>
+          <div>
+            <label class="block text-slate-600 font-medium mb-1">结束日期</label>
+            <input type="date" id="al-end" value="${esc(auditLogQuery.end)}" class="w-full px-3 py-1.5 border rounded-lg">
+          </div>
+          <div class="flex gap-2">
+            <button onclick="auditLogSearch()" class="px-4 py-1.5 bg-teal-500 text-white rounded-lg hover:bg-teal-600">查询</button>
+            <button onclick="auditLogReset()" class="px-4 py-1.5 border border-slate-300 rounded-lg hover:bg-slate-50">重置</button>
+          </div>
+        </div>
+      </div>
+      <div class="bg-white rounded-xl shadow-sm overflow-hidden">
+        <div class="px-4 py-3 border-b border-slate-100 flex items-center justify-between flex-wrap gap-2">
+          <span class="text-slate-700 font-medium">共 <span class="text-teal-600 font-bold">${payload.total}</span> 条记录</span>
+          <div class="flex gap-1">${pageBtns.join('')}</div>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full">
+            <thead>
+              <tr class="bg-slate-50 text-slate-500">
+                <th class="px-4 py-2 text-left font-medium">时间</th>
+                <th class="px-4 py-2 text-left font-medium">动作</th>
+                <th class="px-4 py-2 text-left font-medium">详情</th>
+                <th class="px-4 py-2 text-left font-medium">操作人</th>
+              </tr>
+            </thead>
+            <tbody>${rows || '<tr><td colspan="4" class="px-4 py-10 text-center text-slate-400">暂无日志</td></tr>'}</tbody>
+          </table>
+        </div>
+      </div>
+    </div>`;
+}
+function auditLogSearch() {
+  auditLogQuery = {
+    operator: (document.getElementById('al-op') || {}).value || '',
+    q: (document.getElementById('al-q') || {}).value || '',
+    action: '',
+    start: (document.getElementById('al-start') || {}).value || '',
+    end: (document.getElementById('al-end') || {}).value || ''
+  };
+  auditLogPage = 1;
+  renderAdminAuditLog();
+}
+function auditLogReset() {
+  auditLogQuery = { operator: '', q: '', action: '', start: '', end: '' };
+  auditLogPage = 1;
+  renderAdminAuditLog();
+}
+function auditLogGoPage(p) {
+  auditLogPage = p;
+  renderAdminAuditLog();
+}
+
+// ===== 系统管理：数据备份 =====
+async function renderAdminBackup() {
+  document.getElementById('page-title').textContent = '数据备份';
+  document.getElementById('page-subtitle').textContent = '将当前数据快照保存到服务端，保留最近 20 份';
+  const container = document.getElementById('page-content');
+  if (!container) return;
+  let backups = [];
+  try {
+    const res = await fetch('/api/admin/backups');
+    if (res.ok) backups = (await res.json()).backups || [];
+  } catch (e) { /* ignore */ }
+  container.innerHTML = `
+    <div class="fade-in text-xs">
+      <div class="bg-white rounded-xl shadow-sm overflow-hidden mb-4">
+        <div class="p-6 flex items-center gap-4">
+          <div class="flex-1">
+            <h3 class="text-base font-semibold text-slate-800 mb-1">手动备份数据</h3>
+            <p class="text-slate-500">立即将当前在用数据快照保存到服务端备份目录（自动保留最近 20 份，超出自动清理）。</p>
+          </div>
+          <button onclick="adminCreateBackup()" class="px-5 py-2.5 bg-teal-500 text-white rounded-lg hover:bg-teal-600 flex items-center gap-2">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4"/></svg>
+            立即备份
+          </button>
+        </div>
+      </div>
+      <div class="bg-white rounded-xl shadow-sm overflow-hidden">
+        <div class="px-4 py-3 border-b border-slate-100">
+          <span class="text-slate-700 font-medium">备份列表（<span class="text-teal-600 font-bold">${backups.length}</span>）</span>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full">
+            <thead><tr class="bg-slate-50 text-slate-500">
+              <th class="px-4 py-2 text-left font-medium">文件名</th>
+              <th class="px-4 py-2 text-left font-medium">大小</th>
+              <th class="px-4 py-2 text-left font-medium">时间</th>
+            </tr></thead>
+            <tbody>${backups.map(b => `
+              <tr class="border-b border-slate-100 hover:bg-slate-50">
+                <td class="px-4 py-2.5 text-slate-700 whitespace-nowrap">${esc(b.file)}</td>
+                <td class="px-4 py-2.5 text-slate-500 whitespace-nowrap">${((b.size || 0) / 1024).toFixed(1)} KB</td>
+                <td class="px-4 py-2.5 text-slate-500 whitespace-nowrap">${esc((b.modifiedAt || '').replace('T', ' ').slice(0, 19))}</td>
+              </tr>`).join('') || '<tr><td colspan="3" class="px-4 py-10 text-center text-slate-400">暂无备份，请点击上方按钮创建</td></tr>'}</tbody>
+          </table>
+        </div>
+      </div>
+    </div>`;
+}
+async function adminCreateBackup() {
+  try {
+    const res = await fetch('/api/admin/backup', { method: 'POST' });
+    const r = await res.json();
+    if (r.success) {
+      showSuccessModal('备份成功：' + (r.file || ''));
+      renderAdminBackup();
+    } else {
+      showAlertModal('备份失败', r.message || '备份失败');
+    }
+  } catch (e) {
+    showAlertModal('备份失败', '请检查服务端连接');
+  }
 }
 
 // ===== 报表与统计中心：报表聚合辅助 =====

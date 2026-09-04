@@ -204,21 +204,44 @@ function saveData() {
   return saveQueue;
 }
 
-// ===== 自动备份：启动时备份，保留最近 N 份 =====
+// ===== 自动备份：启动/每日备份，保留最近 N 份 =====
 const BACKUP_DIR = path.join(__dirname, 'backups');
 const MAX_BACKUPS = 20;
 function createBackup() {
+  const result = { ok: false, file: '', error: '' };
   try {
-    if (!fs.existsSync(DATA_FILE)) return;
+    if (!fs.existsSync(DATA_FILE)) { result.error = '数据文件不存在'; return result; }
     if (!fs.existsSync(BACKUP_DIR)) fs.mkdirSync(BACKUP_DIR, { recursive: true });
     const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-    fs.copyFileSync(DATA_FILE, path.join(BACKUP_DIR, `data-${stamp}.json`));
+    const file = `data-${stamp}.json`;
+    fs.copyFileSync(DATA_FILE, path.join(BACKUP_DIR, file));
     const files = fs.readdirSync(BACKUP_DIR).filter(f => f.startsWith('data-')).sort();
     while (files.length > MAX_BACKUPS) {
       fs.unlinkSync(path.join(BACKUP_DIR, files.shift()));
     }
+    result.ok = true;
+    result.file = file;
   } catch (error) {
+    result.error = error.message || String(error);
     console.error('Failed to create backup:', error);
+  }
+  return result;
+}
+function listBackups() {
+  try {
+    if (!fs.existsSync(BACKUP_DIR)) return [];
+    return fs.readdirSync(BACKUP_DIR)
+      .filter(f => f.startsWith('data-') && f.endsWith('.json'))
+      .sort()
+      .map(f => {
+        try {
+          const st = fs.statSync(path.join(BACKUP_DIR, f));
+          return { file: f, size: st.size, modifiedAt: st.mtime.toISOString() };
+        } catch (e) { return { file: f, size: 0, modifiedAt: '' }; }
+      })
+      .reverse();
+  } catch (e) {
+    return [];
   }
 }
 
@@ -2726,6 +2749,23 @@ app.post('/api/notifications/read', (req, res) => {
   res.json(genNotifications());
 });
 
+// ===== 数据备份：手动备份 + 备份列表（管理员） =====
+app.get('/api/admin/backups', requireAdmin, (req, res) => {
+  res.json({ success: true, backups: listBackups() });
+});
+
+app.post('/api/admin/backup', requireAdmin, (req, res) => {
+  // 先落盘当前数据（确保未排队写入也被持久化），再快照
+  saveData().then(() => {
+    const result = createBackup();
+    if (!result.ok) {
+      return res.status(500).json({ success: false, message: '备份失败：' + result.error });
+    }
+    logAudit('数据备份', `手动创建备份 ${result.file}`, req.user && (req.user.name || req.user.username));
+    res.json({ success: true, message: '备份成功', file: result.file, backups: listBackups() });
+  });
+});
+
 // ==================== 智能采购建议 API ====================
 app.get('/api/purchase-suggestions', (req, res) => {
   const suggestions = [];
@@ -2821,8 +2861,37 @@ app.get('/api/dispatch-suggestions', (req, res) => {
 
 // ==================== 审计日志 & 健康检查 API ====================
 app.get('/api/audit-logs', (req, res) => {
-  const limit = Math.min(Number(req.query.limit) || 100, 500);
-  const logs = (data.auditLogs || []).slice(-limit).reverse();
+  const qOp = String(req.query.operator || '').trim();
+  const qKeyword = String(req.query.q || '').trim();
+  const qAction = String(req.query.action || '').trim();
+  const start = req.query.start ? Date.parse(req.query.start) : null;
+  const end = req.query.end ? Date.parse(req.query.end) : null;
+  const page = Math.max(1, Number(req.query.page) || 1);
+  const pageSize = Math.min(Number(req.query.pageSize) || 50, 500);
+
+  const filtered = (data.auditLogs || []).filter(log => {
+    if (qOp && !String(log.operator || '').includes(qOp)) return false;
+    if (qAction && !String(log.action || '').includes(qAction)) return false;
+    if (qKeyword) {
+      const hay = String(log.action || '') + String(log.detail || '') + String(log.operator || '');
+      if (!hay.includes(qKeyword)) return false;
+    }
+    const t = log.createdAt ? Date.parse(log.createdAt) : null;
+    if (start && (!t || t < start)) return false;
+    if (end && (!t || t > end)) return false;
+    return true;
+  }).reverse();
+
+  const total = filtered.length;
+  const pageCount = Math.max(1, Math.ceil(total / pageSize));
+  const safePage = Math.min(page, pageCount);
+  const logs = filtered.slice((safePage - 1) * pageSize, safePage * pageSize);
+
+  if (req.query.page !== undefined && req.query.page != null) {
+    // 分页模式
+    return res.json({ success: true, total, page: safePage, pageSize, pageCount, logs });
+  }
+  // 兼容旧调用：直接返回日志数组
   res.json(logs);
 });
 
@@ -2850,14 +2919,23 @@ app.use((req, res, next) => {
   next();
 });
 
+// 统一接口错误提示：JSON 解析失败返回 400；业务异常返回 500 且不泄露内部细节
 app.use((err, req, res, next) => {
-  console.error('Unhandled server error:', err);
   if (res.headersSent) return next(err);
-  res.status(500).json({ error: '服务器内部错误', message: err.message });
+  const status = err.status || err.statusCode || (err.type === 'entity.parse.failed' ? 400 : 500);
+  if (status >= 500) console.error('Unhandled server error:', err);
+  if (status === 400) {
+    return res.status(400).json({ success: false, error: '请求格式错误', message: '请求体不是合法的 JSON 数据' });
+  }
+  res.status(500).json({ success: false, error: '服务器内部错误', message: '服务器处理请求时发生异常，请稍后重试' });
 });
 
 app.listen(PORT, () => {
   console.log(`Server is running on http://localhost:${PORT}`);
   console.log('Full-stack Inventory Management System is ready!');
   createBackup();
+  // 每日自动备份（保留最近 N 份）
+  setInterval(() => {
+    createBackup();
+  }, 24 * 60 * 60 * 1000).unref();
 });
