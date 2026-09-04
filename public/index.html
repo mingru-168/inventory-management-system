@@ -718,6 +718,24 @@
             <p class="text-xs text-slate-500" id="page-subtitle">全栈进销存管理系统 - 数据由后端提供</p>
           </div>
           <div class="flex items-center gap-3">
+            <div class="relative" id="notif-bell-wrap">
+              <button onclick="toggleNotifDropdown(event)" class="relative w-9 h-9 rounded-lg flex items-center justify-center border border-slate-200 hover:bg-slate-50 text-slate-600" title="消息与待办">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.172V11a6 6 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.172c0 .539-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/>
+                </svg>
+                <span id="notif-badge" class="hidden absolute -top-1 -right-1 h-4 min-w-4 px-1 bg-red-500 text-white text-[10px] font-medium rounded-full items-center justify-center">0</span>
+              </button>
+              <div id="notif-dropdown" class="hidden absolute right-0 top-11 w-80 bg-white border border-slate-200 rounded-xl shadow-lg z-50 overflow-hidden">
+                <div class="flex items-center justify-between px-3 py-2 border-b border-slate-100 bg-slate-50">
+                  <span class="text-xs font-semibold text-slate-700">消息与待办</span>
+                  <span class="flex items-center gap-2">
+                    <button onclick="markAllNotificationsRead()" class="text-xs text-blue-500 hover:underline">全部已读</button>
+                    <button onclick="showFullNotifications()" class="text-xs text-teal-600 hover:underline">查看全部</button>
+                  </span>
+                </div>
+                <div id="notif-list" class="max-h-80 overflow-y-auto text-xs"></div>
+              </div>
+            </div>
             <div class="flex items-center gap-2 cursor-pointer hover:bg-slate-50 rounded-lg px-2 py-1" onclick="showUserInfoModal()">
               <div id="user-avatar" class="w-8 h-8 bg-gradient-to-br from-teal-500 to-cyan-500 rounded-full flex items-center justify-center text-white font-medium text-sm">A</div>
               <div class="flex-1 min-w-0">

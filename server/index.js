@@ -144,7 +144,8 @@ function ensureDataIntegrity(obj) {
     'products', 'inventory', 'warehouses', 'customers', 'suppliers', 'salesOrders',
     'purchaseOrders', 'planOrders', 'processes', 'productionOrders', 'financeRecords',
     'stockInRecords', 'productSpecPrices', 'users', 'roles', 'allocationRecords',
-    'orderTrackingRecords', 'inventoryLocks', 'auditLogs', 'exchangeRecords', 'purchaseReturns'
+    'orderTrackingRecords', 'inventoryLocks', 'auditLogs', 'exchangeRecords', 'purchaseReturns',
+    'notifications'
   ];
   collections.forEach(k => {
     if (!Array.isArray(obj[k])) obj[k] = [];
@@ -2616,6 +2617,113 @@ app.get('/api/alerts', (req, res) => {
 
   alerts.sort((a, b) => (rank[a.level] ?? 2) - (rank[b.level] ?? 2));
   res.json({ count: alerts.length, alerts });
+});
+
+// ==================== 站内消息与待办提醒 API ====================
+// 重新生成当前活跃的待办通知，与已读状态合并；已解决的问题自动从已读记录中清理
+function genNotifications() {
+  const now = new Date();
+  const items = [];
+  const readMap = new Map((Array.isArray(data.notifications) ? data.notifications : []).map(n => [n.key, n]));
+
+  // 低库存
+  (data.inventory || []).forEach(inv => {
+    const product = data.products.find(p => String(p.id) === String(inv.productId));
+    const qty = Number(inv.quantity) || 0;
+    const threshold = Number(inv.minStock) > 0 ? Number(inv.minStock) : (Number(product && product.minStock) || 0);
+    if (threshold > 0 && qty <= threshold) {
+      const name = (product && (product.name || product.type)) || inv.productName || inv.productId;
+      items.push({
+        key: 'low_stock:' + inv.productId, type: 'low_stock', level: qty === 0 ? 'danger' : 'warning',
+        title: '库存不足', message: `「${name}」库存 ${qty}，低于安全库存 ${threshold}`,
+        target: 'inventory', link: { page: 'materials', sub: 'warehouse-list' }, createdAt: now.toISOString()
+      });
+    }
+  });
+
+  // 生产逾期 / 临近交期
+  (data.planOrders || []).forEach(po => {
+    if (po.status === 'completed' || po.status === 'cancelled') return;
+    const end = po.endDate ? new Date(po.endDate + 'T23:59:59') : null;
+    if (!end) return;
+    const days = Math.ceil((end - now) / 86400000);
+    const pn = po.productName || po.productModel || po.orderNo;
+    if (days < 0) {
+      items.push({
+        key: 'overdue:' + po.id, type: 'overdue', level: 'danger', title: '生产逾期',
+        message: `生产单 ${po.orderNo}（${pn}）已逾期 ${Math.abs(days)} 天仍未完成`,
+        target: 'production', link: { page: 'production', sub: '' }, createdAt: now.toISOString()
+      });
+    } else if (days <= 3) {
+      items.push({
+        key: 'due_soon:' + po.id, type: 'due_soon', level: 'info', title: '临近交期',
+        message: `生产单 ${po.orderNo}（${pn}）将在 ${days} 天后到期`,
+        target: 'production', link: { page: 'production', sub: '' }, createdAt: now.toISOString()
+      });
+    }
+  });
+
+  // 待审核销售订单
+  const pendingApproval = (data.salesOrders || []).filter(o => o.status === 'pending');
+  if (pendingApproval.length) {
+    items.push({
+      key: 'pending_approval', type: 'pending_approval', level: 'info', title: '待审核订单',
+      message: `有 ${pendingApproval.length} 个销售订单待审核`, count: pendingApproval.length,
+      target: 'sales', link: { page: 'sales', sub: '' }, createdAt: now.toISOString()
+    });
+  }
+
+  // 采购单待收货
+  const pendingPO = (data.purchaseOrders || []).filter(o => o.status === 'pending');
+  if (pendingPO.length) {
+    items.push({
+      key: 'pending_purchase', type: 'pending_purchase', level: 'warning', title: '采购待收货',
+      message: `有 ${pendingPO.length} 个采购单待收货`, count: pendingPO.length,
+      target: 'purchase', link: { page: 'purchase', sub: '' }, createdAt: now.toISOString()
+    });
+  }
+
+  // 余货调换/审批待办
+  const pendingExchange = (data.exchangeRecords || []).filter(o => o.status === 'pending');
+  if (pendingExchange.length) {
+    items.push({
+      key: 'pending_exchange', type: 'pending_exchange', level: 'warning', title: '调换货待审核',
+      message: `有 ${pendingExchange.length} 个调换货申请待审核`, count: pendingExchange.length,
+      target: 'exchange', link: { page: 'sales', sub: 'exchange' }, createdAt: now.toISOString()
+    });
+  }
+
+  const rank = { danger: 0, warning: 1, info: 2 };
+  items.sort((a, b) => (rank[a.level] ?? 2) - (rank[b.level] ?? 2));
+
+  // 已读记录只保留仍活跃的项，已解决的问题移除
+  const activeKeys = new Set(items.map(i => i.key));
+  const pruned = (Array.isArray(data.notifications) ? data.notifications : []).filter(n => activeKeys.has(n.key));
+  const changed = pruned.length !== (Array.isArray(data.notifications) ? data.notifications.length : 0);
+  data.notifications = pruned;
+  if (changed) saveData();
+
+  const readStatus = new Set(data.notifications.map(n => n.key));
+  const out = items.map(i => ({ ...i, read: readStatus.has(i.key) }));
+  return { count: out.length, unread: out.filter(i => !i.read).length, items: out };
+}
+
+app.get('/api/notifications', (req, res) => {
+  res.json(genNotifications());
+});
+
+app.post('/api/notifications/read', (req, res) => {
+  genNotifications(); // 先清理已解决项，保证只标记当前活跃项
+  const keys = req.body && req.body.all ? null : (Array.isArray(req.body.keys) ? req.body.keys : []);
+  const existing = new Set(data.notifications.map(n => n.key));
+  const push = k => { if (!existing.has(k)) { data.notifications.push({ key: k, readAt: new Date().toISOString() }); existing.add(k); } };
+  if (keys === null) {
+    genNotifications().items.forEach(i => push(i.key));
+  } else {
+    keys.forEach(push);
+  }
+  saveData();
+  res.json(genNotifications());
 });
 
 // ==================== 智能采购建议 API ====================

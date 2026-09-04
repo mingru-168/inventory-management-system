@@ -1776,6 +1776,7 @@ async function renderPage(page) {
     inventory: ['库存管理', '管理库存和出入库'],
     finance: ['财务管理', '管理财务收支记录'],
     reports: ['报表管理', '报表统计和分析'],
+    notifications: ['消息与待办', '审批、库存预警、交期、采购等实时待办'],
     settings: ['系统设置', '系统配置和管理'],
     materials: ['资料管理', '基础资料管理'],
     admin: ['系统管理', '系统管理和维护']
@@ -1803,6 +1804,7 @@ async function renderPage(page) {
     case 'finance': await renderFinance(); break;
     case 'production': await renderProduction(); break;
     case 'reports': await renderReports(); break;
+    case 'notifications': await renderNotifications(); break;
     case 'settings': await renderSettings(); break;
     case 'materials': await renderMaterials(); break;
     case 'admin': await renderAdmin(); break;
@@ -17146,6 +17148,122 @@ function switchReportsTab(tab) {
   }
 }
 
+// ===== 消息与待办提醒（站内）=====
+let notifState = { count: 0, unread: 0, items: [] };
+const NOTIF_LEVEL = {
+  danger: { tag: '紧急', cls: 'bg-red-50 border-red-100 text-red-600' },
+  warning: { tag: '提醒', cls: 'bg-amber-50 border-amber-100 text-amber-600' },
+  info: { tag: '信息', cls: 'bg-slate-50 border-slate-100 text-slate-500' }
+};
+async function fetchNotifications() {
+  try {
+    const res = await fetch('/api/notifications');
+    if (!res.ok) return;
+    notifState = await res.json();
+    renderNotifBadge();
+    renderNotifList();
+  } catch (e) { /* 静默失败，不影响主流程 */ }
+}
+function renderNotifBadge() {
+  const badge = document.getElementById('notif-badge');
+  if (!badge) return;
+  const u = notifState.unread || 0;
+  if (u > 0) { badge.textContent = u > 99 ? '99+' : String(u); badge.classList.remove('hidden'); badge.classList.add('flex'); }
+  else { badge.classList.add('hidden'); badge.classList.remove('flex'); }
+}
+function notifTagHTML(level) {
+  const lv = NOTIF_LEVEL[level] || NOTIF_LEVEL.info;
+  return `<span class="text-[10px] px-1.5 py-0.5 rounded border ${lv.cls}">${lv.tag}</span>`;
+}
+function renderNotifList() {
+  const list = document.getElementById('notif-list');
+  if (!list) return;
+  const items = notifState.items || [];
+  list.innerHTML = items.length ? items.slice(0, 12).map(n => `
+    <div class="px-3 py-2 border-b border-slate-50 hover:bg-cyan-50 cursor-pointer flex items-start gap-2" onclick="markNotifItemRead('${esc(n.key)}','${esc((n.link||{}).page||'')}','${esc((n.link||{}).sub||'')}')">
+      <span class="mt-1 w-2 h-2 rounded-full flex-shrink-0 ${n.read ? 'bg-slate-200' : 'bg-red-500'}"></span>
+      <span class="flex-1 min-w-0">
+        <span class="block text-slate-700 font-medium">${esc(n.title)}</span>
+        <span class="block text-slate-500 truncate" title="${esc(n.message)}">${esc(n.message)}</span>
+      </span>
+      ${notifTagHTML(n.level)}
+    </div>`).join('') : '<p class="px-3 py-6 text-center text-slate-400">暂无待办提醒</p>';
+}
+function toggleNotifDropdown(event) {
+  if (event) event.stopPropagation();
+  const dd = document.getElementById('notif-dropdown');
+  if (!dd) return;
+  const wasHidden = dd.classList.contains('hidden');
+  dd.classList.toggle('hidden');
+  if (wasHidden) fetchNotifications();
+}
+function closeNotifDropdown() {
+  const dd = document.getElementById('notif-dropdown');
+  if (dd) dd.classList.add('hidden');
+}
+document.addEventListener('click', closeNotifDropdown);
+async function markNotificationsRead(keys) {
+  try { await fetch('/api/notifications/read', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ keys: keys || [] }) }); } catch (e) { /* ignore */ }
+  await fetchNotifications();
+  if (currentPage === 'notifications') await renderNotifications();
+}
+async function markAllNotificationsRead() {
+  try { await fetch('/api/notifications/read', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ all: true }) }); } catch (e) { /* ignore */ }
+  await fetchNotifications();
+  if (currentPage === 'notifications') await renderNotifications();
+}
+async function markNotifItemRead(key, page, sub) {
+  await markNotificationsRead(key ? [key] : []);
+  gotoNotification({ page, sub });
+}
+function gotoNotification(link) {
+  closeNotifDropdown();
+  if (!link || !link.page) return;
+  if (link.page === 'materials') { if (link.sub) materialsSubPage = link.sub; navigateTo('materials'); }
+  else if (link.page === 'exchange') navigateTo('sales');
+  else navigateTo(link.page);
+}
+async function showFullNotifications() {
+  closeNotifDropdown();
+  navigateTo('notifications');
+}
+async function renderNotifications() {
+  document.getElementById('page-title').textContent = '消息与待办';
+  document.getElementById('page-subtitle').textContent = '审批、库存预警、交期、采购等实时待办';
+  const container = document.getElementById('page-content');
+  if (!container) return;
+  try { const res = await fetch('/api/notifications'); if (res.ok) notifState = await res.json(); } catch (e) { /* ignore */ }
+  const items = notifState.items || [];
+  container.innerHTML = `
+    <div class="fade-in text-xs">
+      <div class="bg-white rounded-xl shadow-sm overflow-hidden">
+        <div class="px-4 py-3 border-b border-slate-100 flex items-center justify-between flex-wrap gap-2">
+          <div class="flex items-center gap-4">
+            <span class="text-sm font-medium text-slate-700">待办数量 <span class="text-teal-600 font-bold">${items.length}</span></span>
+            <span class="text-sm font-medium text-slate-700">未读 <span class="text-red-600 font-bold">${notifState.unread || 0}</span></span>
+          </div>
+          <div class="flex gap-2">
+            <button onclick="markAllNotificationsRead()" class="px-4 py-2 bg-teal-500 text-white rounded-lg hover:bg-teal-600 text-sm">全部标记已读</button>
+            <button onclick="fetchNotifications()" class="px-4 py-2 border border-slate-300 text-slate-600 rounded-lg hover:bg-slate-50 text-sm">刷新</button>
+          </div>
+        </div>
+        <div class="divide-y divide-slate-100">
+          ${items.map(n => `
+            <div class="px-4 py-3 hover:bg-slate-50 cursor-pointer flex items-start gap-3" onclick="markNotifItemRead('${esc(n.key)}','${esc((n.link||{}).page||'')}','${esc((n.link||{}).sub||'')}')">
+              <span class="mt-1.5 w-2.5 h-2.5 rounded-full flex-shrink-0 ${n.read ? 'bg-slate-200' : 'bg-red-500'}"></span>
+              <div class="flex-1 min-w-0">
+                <div class="flex items-center gap-2 flex-wrap">${notifTagHTML(n.level)}<span class="text-slate-800 font-medium">${esc(n.title)}</span></div>
+                <p class="text-slate-500 mt-0.5">${esc(n.message)}</p>
+                <p class="text-[10px] text-slate-400 mt-1">${(n.createdAt || '').slice(0, 16).replace('T', ' ')}</p>
+              </div>
+              ${n.read ? '' : '<span class="text-[10px] text-blue-500 self-center flex-shrink-0">未读 · 点击进入</span>'}
+              <svg class="w-4 h-4 text-slate-300 self-center flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+            </div>`).join('') || '<p class="px-4 py-12 text-center text-slate-400">暂无待办提醒</p>'}
+        </div>
+      </div>
+    </div>`;
+}
+
 function renderMaterials() {
   switch(materialsSubPage) {
     case 'warehouse-list': renderMaterialsWarehouseList(); break;
@@ -20444,6 +20562,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   applyRoleGating();
   loadFooterInfo();
   loadLocationData();
+  fetchNotifications();
   const savedPage = loadCurrentPage();
   const savedSubPage = loadMaterialsSubPage();
   _materialsSubPage = savedSubPage;
