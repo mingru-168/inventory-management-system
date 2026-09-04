@@ -1830,6 +1830,79 @@ async function renderDashboard() {
   const alertDotStyle = { danger: 'bg-red-500', warning: 'bg-amber-500', info: 'bg-sky-500' };
   const alertTitleStyle = { danger: 'text-red-700', warning: 'text-amber-700', info: 'text-sky-700' };
 
+  // ===== 图表辅助函数（原生 SVG，零外部依赖） =====
+  // 横向条形图：近14天销售趋势
+  function trendBarsHTML(trend) {
+    if (!trend || !trend.length) return '<p class="text-sm text-slate-400 text-center py-6">暂无销售数据</p>';
+    const max = Math.max(1, ...trend.map(t => t.amount));
+    return trend.map(t => {
+      const w = Math.max(2, Math.round((t.amount / max) * 100));
+      const label = String(t.date || '').slice(5); // MM-DD
+      return `
+        <div class="flex items-center gap-2" title="${t.date} 销售额 ${formatCurrency(t.amount)}">
+          <span class="w-10 text-[10px] text-slate-500 text-right flex-shrink-0">${label}</span>
+          <div class="flex-1 h-3.5 bg-slate-100 rounded-sm overflow-hidden">
+            <div class="h-full md:rounded-sm ${t.amount > 0 ? 'bg-gradient-to-r from-teal-400 to-teal-600' : ''}" style="width:${w}%"></div>
+          </div>
+          <span class="w-14 text-right text-[10px] text-slate-600 flex-shrink-0">${formatCompact(t.amount)}</span>
+        </div>`;
+    }).join('');
+  }
+  // 环形图 + 图例：订单状态分布
+  function statusDonutHTML(dist) {
+    const colors = { pending: '#f59e0b', approved: '#3b82f6', in_progress: '#8b5cf6', shipped: '#06b6d4', completed: '#10b981', cancelled: '#ef4444', returned: '#f97316' };
+    const total = dist.reduce((s, d) => s + d.count, 0);
+    if (!total) return '<p class="text-sm text-slate-400 text-center py-6">暂无订单</p>';
+    let acc = 0;
+    const arcs = dist.map(d => {
+      const pct = d.count / total;
+      const stroke = colors[d.status] || '#94a3b8';
+      const dash = pct * 100;
+      const rotate = acc * 100 * 3.6;
+      acc += pct;
+      return `<circle cx="50" cy="50" r="34" fill="none" stroke="${stroke}" stroke-width="14" stroke-dasharray="${dash} ${100-dash}" stroke-dashoffset="${25-dash/2}" transform="rotate(${rotate} 50 50)" stroke-linecap="butt"></circle>`;
+    }).join('');
+    const statusName = { pending: '待审核', approved: '已审核', in_progress: '生产中', shipped: '已发货', completed: '已完成', cancelled: '已取消', returned: '已退货' };
+    const legends = dist.map(d => `
+      <div class="flex items-center justify-between text-xs">
+        <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-sm" style="background:${colors[d.status] || '#94a3b8'}"></span>${statusName[d.status] || d.status}</span>
+        <span class="text-slate-500">${d.count} <span class="text-slate-400">(${Math.round(d.count/total*100)}%)</span></span>
+      </div>`).join('');
+    return `<div class="flex items-center justify-center gap-6">
+      <div class="w-28 h-28 relative flex-shrink-0">
+        <svg viewBox="0 0 100 100" class="w-full h-full">${arcs}</svg>
+        <div class="absolute inset-0 flex flex-col items-center justify-center"><span class="text-lg font-bold text-slate-800">${total}</span><span class="text-[10px] text-slate-400">订单</span></div>
+      </div>
+      <div class="flex-1 min-w-0 space-y-1.5">${legends}</div>
+    </div>`;
+  }
+  // 库存品类占比：简单横条 + 百分比
+  function categoryHTML(dist) {
+    if (!dist || !dist.length) return '<p class="text-sm text-slate-400 text-center py-6">暂无库存数据</p>';
+    const total = dist.reduce((s, d) => s + d.value, 0) || 1;
+    const palette = ['#06b6d4', '#6366f1', '#10b981', '#f59e0b', '#8b5cf6', '#ef4444', '#14b8a6', '#f97316'];
+    return dist.slice(0, 8).map((d, i) => `
+      <div class="flex items-center gap-2">
+        <span class="w-14 text-xs text-slate-600 truncate flex-shrink-0" title="${esc(d.category)}">${esc(d.category)}</span>
+        <div class="flex-1 h-4 bg-slate-100 rounded-full overflow-hidden">
+          <div class="h-full rounded-full" style="width:${Math.max(2, Math.round(d.value/total*100))}%;background:${palette[i%palette.length]}"></div>
+        </div>
+        <span class="w-16 text-right text-xs text-slate-500 flex-shrink-0">${d.value} <span class="text-slate-400">(${Math.round(d.value/total*100)}%)</span></span>
+      </div>`).join('');
+  }
+  // 精简金额显示
+  function formatCompact(n) {
+    n = Number(n) || 0;
+    if (n >= 10000) return (n / 10000).toFixed(1) + 'w';
+    if (n >= 1000) return (n / 1000).toFixed(1) + 'k';
+    return String(Math.round(n));
+  }
+  // ===== 图表数据构造 =====
+  const salesTrendArr = dashboard.salesTrend || [];
+  const orderStatusArr = dashboard.orderStatusDist || [];
+  const categoryArr = dashboard.categoryDist || [];
+  const stockAlert = dashboard.stockAlertCount || 0;
+
   const alertItems = (alerts.alerts || []).slice(0, 8).map(a => `
     <div class="flex items-start gap-3 p-3 rounded-lg border ${alertLevelStyle[a.level] || alertLevelStyle.info} cursor-pointer hover:opacity-90" onclick="navigateTo('${a.target || 'dashboard'}')">
       <span class="mt-1.5 w-2 h-2 rounded-full flex-shrink-0 ${alertDotStyle[a.level] || alertDotStyle.info}"></span>
@@ -1929,6 +2002,59 @@ async function renderDashboard() {
           <div class="max-h-80 overflow-y-auto pr-1">
             ${purchaseSuggestions.count > 0 ? suggestionItems : '<p class="text-sm text-slate-400 text-center py-6">暂无采购建议，库存充足</p>'}
           </div>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+        <div class="bg-white rounded-xl p-6 shadow-sm">
+          <div class="flex items-center justify-between mb-4">
+            <h3 class="text-lg font-semibold text-slate-800 flex items-center gap-2">
+              <svg class="w-5 h-5 text-teal-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 3v18h18M8 17v-5m4 5V9m4 8v-9"/></svg>
+              近 14 天销售趋势
+            </h3>
+          </div>
+          <div class="space-y-1.5 max-h-72 overflow-y-auto pr-1">${trendBarsHTML(salesTrendArr)}</div>
+        </div>
+        <div class="bg-white rounded-xl p-6 shadow-sm">
+          <div class="flex items-center justify-between mb-4">
+            <h3 class="text-lg font-semibold text-slate-800 flex items-center gap-2">
+              <svg class="w-5 h-5 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
+              订单状态分布
+            </h3>
+          </div>
+          ${statusDonutHTML(orderStatusArr)}
+        </div>
+      </div>
+
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+        <div class="bg-white rounded-xl p-6 shadow-sm">
+          <div class="flex items-center justify-between mb-4">
+            <h3 class="text-lg font-semibold text-slate-800 flex items-center gap-2">
+              <svg class="w-5 h-5 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/></svg>
+              库存品类占比
+            </h3>
+          </div>
+          <div class="space-y-2.5">${categoryHTML(categoryArr)}</div>
+        </div>
+        <div class="bg-white rounded-xl p-6 shadow-sm">
+          <div class="flex items-center justify-between mb-4">
+            <h3 class="text-lg font-semibold text-slate-800 flex items-center gap-2">
+              <svg class="w-5 h-5 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M12 3a9 9 0 100 18 9 9 0 000-18z"/></svg>
+              库存预警
+            </h3>
+            <span class="text-xs ${stockAlert > 0 ? 'text-red-500' : 'text-green-600'} font-medium">${stockAlert > 0 ? `${stockAlert} 项需关注` : '库存充足'}</span>
+          </div>
+          <div class="grid grid-cols-2 gap-4">
+            <div class="bg-red-50 rounded-lg p-4 text-center">
+              <p class="text-2xl font-bold text-red-500">${dashboard.lowStock || 0}</p>
+              <p class="text-xs text-slate-500 mt-1">低于安全库存</p>
+            </div>
+            <div class="bg-amber-50 rounded-lg p-4 text-center">
+              <p class="text-2xl font-bold text-amber-500">${dashboard.outOfStock || 0}</p>
+              <p class="text-xs text-slate-500 mt-1">已缺货</p>
+            </div>
+          </div>
+          <p class="text-xs text-slate-400 mt-4">去 <button onclick="navigateTo('inventory')" class="text-teal-600 hover:underline">库存管理 →</button> 调整库存</p>
         </div>
       </div>
 
@@ -3939,8 +4065,124 @@ function renderSingleStopOrder(container) {
     '</div></div>';
 }
 
-function stopActionChangeOrder(orderNo, itemIndex) { showAlertModal('改单', '改单功能'); }
-function stopActionChangeQty(orderNo, itemIndex) { showAlertModal('改数', '改数功能'); }
+// ===== 中止生产：改单 / 改数 =====
+// 将修改同时应用到 data、localStorage（含可能存在的 productionOrders / schedulingOrders）
+// 并调用后端 PUT /api/scheduling-orders/:orderNo/items/:itemIndex 持久化。
+function applyOrderItemPatch(orderNo, itemIndex, patch) {
+  let applied = false;
+  function patchIn(list) {
+    if (!Array.isArray(list)) return false;
+    const order = list.find(o => String(o.orderNo) === orderNo);
+    if (order && Array.isArray(order.items) && order.items[itemIndex]) {
+      Object.keys(patch).forEach(function (k) {
+        order.items[itemIndex][k] = patch[k];
+      });
+      return true;
+    }
+    return false;
+  }
+  if (patchIn(data.productionOrders)) applied = true;
+  if (patchIn(data.schedulingOrders)) applied = true;
+
+  // 同步 localStorage
+  try {
+    const storedData = localStorage.getItem('erpData');
+    if (storedData) {
+      const parsed = JSON.parse(storedData);
+      let changed = false;
+      if (patchIn(parsed.productionOrders)) changed = true;
+      if (patchIn(parsed.schedulingOrders)) changed = true;
+      if (changed) localStorage.setItem('erpData', JSON.stringify(parsed));
+    }
+  } catch (e) { console.error('同步 localStorage 失败:', e); }
+
+  return applied;
+}
+
+async function persistOrderItemChange(orderNo, itemIndex, patch, refreshFn) {
+  const applied = applyOrderItemPatch(orderNo, itemIndex, patch);
+  try {
+    const resp = await fetch('/api/scheduling-orders/' + encodeURIComponent(orderNo) + '/items/' + itemIndex, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch)
+    });
+    const result = await resp.json().catch(() => ({}));
+    if (resp.ok && result.success) {
+      showSuccessModal('已保存修改');
+    } else {
+      showAlertModal('提示', (result.message || '后端保存失败，本地已临时更新') + (applied ? '（本地已更新）' : ''));
+    }
+  } catch (e) {
+    if (applied) showAlertModal('提示', '已保存到本地，但服务器同步失败：' + e.message);
+    else showAlertModal('错误', '保存失败：' + e.message);
+  }
+  if (typeof refreshFn === 'function') refreshFn();
+}
+
+// 改数：仅修改数量
+function stopActionChangeQty(orderNo, itemIndex) {
+  const order = (data.productionOrders || []).find(o => String(o.orderNo) === orderNo)
+    || (data.schedulingOrders || []).find(o => String(o.orderNo) === orderNo);
+  const cur = (order && order.items && order.items[itemIndex] && order.items[itemIndex].quantity) || 0;
+  showInputModal('改数', '请输入新的数量:', String(cur), '请输入正整数').then(function (val) {
+    if (val === null || val.trim() === '') return;
+    const n = Number(val);
+    if (!(n > 0)) { showAlertModal('提示', '数量必须为正数'); return; }
+    persistOrderItemChange(orderNo, itemIndex, { quantity: n }, renderStopProduction);
+  });
+}
+
+// 改单：弹窗编辑该工序项的产品信息字段
+function stopActionChangeOrder(orderNo, itemIndex) {
+  const order = (data.productionOrders || []).find(o => String(o.orderNo) === orderNo)
+    || (data.schedulingOrders || []).find(o => String(o.orderNo) === orderNo)
+    || (function () {
+      try {
+        const parsed = JSON.parse(localStorage.getItem('erpData') || '{}');
+        return (parsed.productionOrders || []).find(o => String(o.orderNo) === orderNo)
+          || (parsed.schedulingOrders || []).find(o => String(o.orderNo) === orderNo);
+      } catch (e) { return null; }
+    })();
+  const item = (order && order.items && order.items[itemIndex]) || {};
+  const editId = 'stopEditItemModal';
+  document.getElementById(editId) && document.getElementById(editId).remove();
+  const fields = [
+    { key: 'model', label: '产品型号', value: item.model || '' },
+    { key: 'productName', label: '产品名称', value: item.productName || item.name || '' },
+    { key: 'color', label: '颜色', value: item.color || item.counterColor || item.tableColor || '' },
+    { key: 'spec', label: '规格', value: item.spec || item.size || '' },
+    { key: 'tableColor', label: '台面颜色', value: item.tableColor || item.counterColor || '' },
+    { key: 'followWay', label: '跟单方式', value: item.followWay || '' },
+    { key: 'receiver', label: '收货人', value: item.receiver || (order && order.receiver) || '' }
+  ];
+  const fieldsHtml = fields.map(function (f, i) {
+    return '<div class="mb-3">' +
+      '<label class="block text-xs font-medium text-slate-500 mb-1">' + f.label + '</label>' +
+      '<input id="stopEdit_' + f.key + '" type="text" class="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500 text-sm" value="' + esc(f.value) + '">' +
+      '</div>';
+  }).join('');
+  document.body.insertAdjacentHTML('beforeend',
+    '<div id="' + editId + '" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">' +
+    '<div class="bg-white rounded-xl w-full max-w-md shadow-xl overflow-hidden">' +
+    '<div class="bg-gradient-to-r from-indigo-500 to-indigo-600 px-6 py-4"><h3 class="text-lg font-semibold text-white text-center">改单</h3></div>' +
+    '<div class="p-6 max-h-[60vh] overflow-y-auto">' + fieldsHtml + '</div>' +
+    '<div class="px-6 py-4 bg-slate-50 flex justify-end gap-3">' +
+    '<button onclick="document.getElementById(\'' + editId + '\').remove()" class="px-6 py-2 border border-slate-300 text-slate-600 rounded-lg hover:bg-slate-100 text-sm">取消</button>' +
+    '<button onclick="submitStopEditItem(\'' + orderNo + '\',' + itemIndex + ')" class="px-6 py-2 bg-gradient-to-r from-indigo-500 to-indigo-600 text-white rounded-lg hover:from-indigo-600 hover:to-indigo-700 text-sm">确定</button>' +
+    '</div></div></div>');
+}
+
+function submitStopEditItem(orderNo, itemIndex) {
+  const patch = {};
+  ['model', 'productName', 'color', 'spec', 'tableColor', 'followWay', 'receiver'].forEach(function (key) {
+    const el = document.getElementById('stopEdit_' + key);
+    if (el && el.value.trim() !== '') patch[key] = el.value.trim();
+  });
+  if (Object.keys(patch).length === 0) { showAlertModal('提示', '未填写任何修改内容'); return; }
+  document.getElementById('stopEditItemModal').remove();
+  persistOrderItemChange(orderNo, itemIndex, patch, renderStopProduction);
+}
 function stopActionCancelProduction(orderNo, itemIndex) {
   showConfirmModal('取消生产', '确定要取消该产品的生产吗？', function() {
     try {
@@ -7055,7 +7297,7 @@ function printOrder(orderId) {
 
   container.innerHTML = `
     <div class="fade-in">
-      <div class="bg-white border border-slate-200 rounded-lg overflow-hidden shadow-lg max-w-4xl mx-auto">
+      <div id="order-receipt" class="bg-white border border-slate-200 rounded-lg overflow-hidden shadow-lg max-w-4xl mx-auto">
         <div class="bg-gradient-to-r from-slate-800 to-slate-700 px-8 py-6">
           <h1 class="text-2xl font-bold text-white text-center mb-1">铭瑞客厅家具 订货单</h1>
           <p class="text-sm text-white/80 text-center">电话: 0757-83132506 地址: 广东省佛山市顺德区乐从镇新桂路205号</p>
@@ -7186,6 +7428,9 @@ function printOrder(orderId) {
         </div>
 
         <div class="px-8 py-4 bg-slate-50 border-t border-slate-200 flex justify-center gap-4">
+          <button onclick="printOrderExcel('${order.id}')" class="px-8 py-2.5 border border-teal-500 text-teal-600 rounded-lg hover:bg-teal-50 transition-colors font-medium">
+            导出订货单 Excel
+          </button>
           <button onclick="window.print()" class="px-8 py-2.5 bg-gradient-to-r from-teal-500 to-teal-600 text-white rounded-lg hover:from-teal-600 hover:to-teal-700 transition-all shadow-md hover:shadow-lg font-medium">
             打印订货单
           </button>
@@ -7200,6 +7445,64 @@ function printOrder(orderId) {
 
 function previewOrder(orderId) {
   showAlertModal('提示', `正在预览订单: ${orderId}`);
+}
+
+// 导出单个订货单为 Excel 兼容的 CSV（带 UTF-8 BOM，可用 Excel 直接打开）
+function printOrderExcel(orderId) {
+  const order = data.salesOrders.find(o => String(o.id) === String(orderId));
+  if (!order) { showAlertModal('提示', '订单不存在'); return; }
+  const items = order.items || [];
+  const cust = data.customers.find(c => String(c.id) === String(order.customerId || order.customer_id)) || {};
+  const head = [
+    ['铭瑞客厅家具 订货单'],
+    ['电话: 0757-83132506', '地址: 广东省佛山市顺德区乐从镇新桂路205号'],
+    [''],
+    ['订单编号', order.orderNo || order.order_no || order.orderNumber || order.id],
+    ['下单日期', order.orderDate || order.order_date || ''],
+    ['订单负责人', order.follower || '-'],
+    ['计划交货', order.deliveryDate || order.delivery_date || '-'],
+    ['客户名称', cust.name || order.customerName || order.customer_name || '-'],
+    ['收货人', order.contactName || order.contact_name || order.contact || '-'],
+    ['联系电话', order.contactPhone || order.contact_phone || order.phone || '-'],
+    ['收货地址', order.address || '-'],
+    ['提货方式', order.deliveryMethod || order.delivery_method || '-'],
+    ['物流名称', order.logistics || '-'],
+    [''], ['']
+  ];
+  const headerRow = ['序号', '产品名称', '型号', '规格', '颜色', '数量', '单位', '单价', '折扣%', '实收金额', '备注'];
+  const rows = items.map((it, i) => [
+    i + 1,
+    it.productName || it.product_name || '-',
+    it.productModel || it.product_model || it.model || '-',
+    it.spec || '-',
+    it.color || '-',
+    it.quantity || 1,
+    it.unit || '-',
+    Number(it.unitPrice || it.unit_price || it.price || 0).toFixed(2),
+    it.discount || 100,
+    Number(it.totalPrice || it.total_price || it.amount || 0).toFixed(2),
+    it.remark || '-'
+  ]);
+  const totalQty = items.reduce((s, it) => s + (it.quantity || 0), 0);
+  const totalAmount = Number(order.totalAmount || order.total_amount || 0).toFixed(2);
+  const foot = [['', '', '', '', '', '', '产品总数量', totalQty + ' 件', '', '', ''], ['', '', '', '', '', '', '订单总金额', totalAmount, '', '', '']];
+
+  const rowsAll = head.concat([headerRow], rows, foot);
+  const csv = '\uFEFF' + rowsAll.map(r => r.map(cell => {
+    const s = String(cell === null || cell === undefined ? '' : cell);
+    return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  }).join(',')).join('\r\n');
+
+  const blob = new Blob([csv], { type: 'application/vnd.ms-excel;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = '订货单_' + (order.orderNo || order.orderNo || order.id) + '_' + new Date().toISOString().slice(0, 10) + '.csv';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+  showSuccessModal('已导出订货单 Excel');
 }
 
 function confirmReturn(orderId) {
@@ -10039,9 +10342,282 @@ function renderProduction() {
     case 'stop':
       renderStopProduction();
       break;
+    case 'stockin':
+      renderProductionStockIn();
+      break;
+    case 'exchange':
+      renderProductionExchange();
+      break;
     default:
       renderProductionPlanOrders();
   }
+}
+
+// ===== 入通用库：生产成品进入通用库存 =====
+async function renderProductionStockIn() {
+  document.getElementById('page-title').textContent = '入通用库';
+  document.getElementById('page-subtitle').textContent = '生产完成成品录入通用库存';
+  const container = document.getElementById('page-content');
+  const products = data.products || [];
+  const warehouses = (data.warehouses && data.warehouses.length) ? data.warehouses : [{ id: 'w1', name: '主仓库' }];
+  let productOptions = '<option value="">-- 请选择产品 --</option>';
+  products.forEach(function (p) {
+    const label = (p.type || p.name || '未知') + (p.model || p.sku ? ' - ' + (p.model || p.sku) : '');
+    productOptions += '<option value="' + (p.id || '') + '">' + label + '</option>';
+  });
+  let warehouseOptions = '<option value="">-- 请选择仓库 --</option>';
+  warehouses.forEach(function (w) {
+    warehouseOptions += '<option value="' + w.name + '">' + w.name + '</option>';
+  });
+
+  // 近期入通用库记录
+  let recordsHtml = '<tr><td colspan="6" class="px-3 py-4 text-center text-sm text-slate-400">暂无入通用库记录</td></tr>';
+  try {
+    const resp = await fetch('/api/stock-in-records');
+    const rows = await resp.json();
+    const mine = (rows || []).filter(r => (r.type === '入通用库')).slice().reverse().slice(0, 20);
+    if (mine.length) {
+      recordsHtml = mine.map(function (r) {
+        return '<tr>' +
+          '<td class="px-3 py-2 text-sm text-slate-600">' + esc(r.productModel || '-') + '</td>' +
+          '<td class="px-3 py-2 text-sm text-slate-800">' + esc(r.productName || '-') + '</td>' +
+          '<td class="px-3 py-2 text-sm text-slate-600">' + (r.quantity || 0) + '</td>' +
+          '<td class="px-3 py-2 text-sm text-slate-600">' + esc(r.warehouse || '-') + '</td>' +
+          '<td class="px-3 py-2 text-sm text-slate-600">' + esc((r.color || '') + ' ' + (r.spec || '')) + '</td>' +
+          '<td class="px-3 py-2 text-sm text-slate-500">' + (r.createdAt ? new Date(r.createdAt).toLocaleString('zh-CN') : '-') + '</td>' +
+          '</tr>';
+      }).join('');
+    }
+  } catch (e) { /* 忽略加载失败 */ }
+
+  container.innerHTML =
+    '<div class="bg-white rounded-xl shadow-sm p-6 mb-6">' +
+    '<h3 class="text-lg font-semibold text-slate-800 mb-4">成品入通用库存</h3>' +
+    '<div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">' +
+    '<div><label class="block text-xs font-medium text-slate-500 mb-1">产品</label><select id="cs_productId" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm">' + productOptions + '</select></div>' +
+    '<div><label class="block text-xs font-medium text-slate-500 mb-1">数量</label><input id="cs_quantity" type="number" min="1" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" placeholder="请输入入库数量"></div>' +
+    '<div><label class="block text-xs font-medium text-slate-500 mb-1">仓库</label><select id="cs_warehouse" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm">' + warehouseOptions + '</select></div>' +
+    '</div>' +
+    '<div class="mb-4"><label class="block text-xs font-medium text-slate-500 mb-1">备注</label><input id="cs_remark" type="text" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" placeholder="选填"></div>' +
+    '<button onclick="submitCommonStockIn()" class="px-6 py-2 bg-teal-500 text-white rounded-lg hover:bg-teal-600 text-sm">确认入库</button>' +
+    '</div>' +
+    '<div class="bg-white rounded-xl shadow-sm p-6">' +
+    '<h3 class="text-lg font-semibold text-slate-800 mb-4">近期入通用库记录</h3>' +
+    '<div class="overflow-x-auto"><table class="w-full border border-slate-200">' +
+    '<thead class="bg-slate-50"><tr>' +
+    '<th class="px-3 py-2 text-left text-xs font-semibold text-slate-600 border-b border-slate-200">型号</th>' +
+    '<th class="px-3 py-2 text-left text-xs font-semibold text-slate-600 border-b border-slate-200">产品名称</th>' +
+    '<th class="px-3 py-2 text-left text-xs font-semibold text-slate-600 border-b border-slate-200">数量</th>' +
+    '<th class="px-3 py-2 text-left text-xs font-semibold text-slate-600 border-b border-slate-200">仓库</th>' +
+    '<th class="px-3 py-2 text-left text-xs font-semibold text-slate-600 border-b border-slate-200">颜色/规格</th>' +
+    '<th class="px-3 py-2 text-left text-xs font-semibold text-slate-600 border-b border-slate-200">时间</th>' +
+    '</tr></thead><tbody>' + recordsHtml + '</tbody></table></div>' +
+    '</div>';
+}
+
+async function submitCommonStockIn() {
+  const productId = document.getElementById('cs_productId').value;
+  const quantity = Number(document.getElementById('cs_quantity').value);
+  const warehouse = document.getElementById('cs_warehouse').value || '主仓库';
+  const remark = document.getElementById('cs_remark').value.trim();
+  if (!productId) { showAlertModal('提示', '请选择产品'); return; }
+  if (!(quantity > 0)) { showAlertModal('提示', '数量必须为正数'); return; }
+  const btn = event && event.target; if (btn) btn.disabled = true;
+  try {
+    const resp = await fetch('/api/common-stock-in', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ productId, quantity, warehouse, remark })
+    });
+    const result = await resp.json();
+    if (resp.ok && result.success) {
+      // 本地同步库存数量，后续库存查询即时可见
+      if (data.products) {
+        const p = data.products.find(x => String(x.id) === productId);
+        if (p) p.stock = (Number(p.stock) || 0) + quantity;
+      }
+      if (data.inventory) {
+        const inv = data.inventory.find(x => String(x.productId) === productId);
+        if (inv) inv.quantity = (Number(inv.quantity) || 0) + quantity;
+      }
+      showSuccessModal('入库成功，已计入通用库存');
+      renderProductionStockIn();
+    } else {
+      showAlertModal('提示', result.message || '入库失败');
+      if (btn) btn.disabled = false;
+    }
+  } catch (e) {
+    showAlertModal('错误', '入库失败：' + e.message);
+    if (btn) btn.disabled = false;
+  }
+}
+
+// ===== 调换货：客户调换货申请管理 =====
+async function renderProductionExchange() {
+  document.getElementById('page-title').textContent = '调换货';
+  document.getElementById('page-subtitle').textContent = '客户调换货申请管理';
+  const container = document.getElementById('page-content');
+  let rowsHtml = '<tr><td colspan="8" class="px-3 py-4 text-center text-sm text-slate-400">暂无调换货记录</td></tr>';
+  let list = [];
+  try {
+    const resp = await fetch('/api/exchange-orders');
+    list = await resp.json();
+  } catch (e) { /* 忽略 */ }
+  if (list && list.length) {
+    const statusMap = { pending: ['待审批', 'bg-amber-100 text-amber-700'], approved: ['已审批', 'bg-blue-100 text-blue-700'], rejected: ['已驳回', 'bg-red-100 text-red-600'], done: ['已完成', 'bg-green-100 text-green-700'] };
+    rowsHtml = list.slice().reverse().map(function (r) {
+      const st = statusMap[r.status] || [r.status || '未知', 'bg-slate-100 text-slate-600'];
+      // 操作按钮：按当前状态展示可用流转
+      let actions = '';
+      if (r.status === 'pending') {
+        actions += '<button onclick="openExchangeAction(\'' + r.id + '\',\'approved\')" class="text-green-600 hover:text-green-800 text-xs mr-2">审批通过</button>';
+        actions += '<button onclick="openExchangeAction(\'' + r.id + '\',\'rejected\')" class="text-red-600 hover:text-red-800 text-xs mr-2">驳回</button>';
+      } else if (r.status === 'approved') {
+        actions += '<button onclick="openExchangeAction(\'' + r.id + '\',\'done\')" class="text-teal-600 hover:text-teal-800 text-xs mr-2">标记完成</button>';
+        actions += '<button onclick="openExchangeAction(\'' + r.id + '\',\'rejected\')" class="text-red-600 hover:text-red-800 text-xs mr-2">驳回</button>';
+      } else if (r.status === 'rejected') {
+        actions += '<button onclick="openExchangeAction(\'' + r.id + '\',\'pending\')" class="text-blue-600 hover:text-blue-800 text-xs mr-2">重新提交</button>';
+      } else if (r.status === 'done') {
+        actions += '<button onclick="openExchangeAction(\'' + r.id + '\',\'pending\')" class="text-amber-600 hover:text-amber-800 text-xs mr-2">重开</button>';
+      }
+      actions += '<button onclick="showExchangeDetail(\'' + r.id + '\')" class="text-slate-500 hover:text-slate-700 text-xs">详情</button>';
+      return '<tr>' +
+        '<td class="px-3 py-2 text-sm text-slate-600">' + esc(r.exchangeNo || '-') + '</td>' +
+        '<td class="px-3 py-2 text-sm text-slate-600">' + esc(r.orderNo || '-') + '</td>' +
+        '<td class="px-3 py-2 text-sm text-slate-800">' + esc(r.productName || '-') + '</td>' +
+        '<td class="px-3 py-2 text-sm text-slate-600">' + esc(r.productModel || '-') + '</td>' +
+        '<td class="px-3 py-2 text-sm text-slate-600">' + (r.quantity || 0) + '</td>' +
+        '<td class="px-3 py-2 text-sm text-slate-600">' + esc(r.reason || '-') + '</td>' +
+        '<td class="px-3 py-2 text-sm"><span class="px-2 py-0.5 rounded ' + st[1] + '">' + st[0] + '</span></td>' +
+        '<td class="px-3 py-2 text-sm whitespace-nowrap">' + actions + '</td>' +
+        '</tr>';
+    }).join('');
+  }
+  container.innerHTML =
+    '<div class="bg-white rounded-xl shadow-sm p-6 mb-6">' +
+    '<h3 class="text-lg font-semibold text-slate-800 mb-4">新增调换货申请</h3>' +
+    '<div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">' +
+    '<div><label class="block text-xs font-medium text-slate-500 mb-1">关联订单号</label><input id="ex_orderNo" type="text" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm"></div>' +
+    '<div><label class="block text-xs font-medium text-slate-500 mb-1">产品名称</label><input id="ex_productName" type="text" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm"></div>' +
+    '<div><label class="block text-xs font-medium text-slate-500 mb-1">产品型号</label><input id="ex_productModel" type="text" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm"></div>' +
+    '<div><label class="block text-xs font-medium text-slate-500 mb-1">数量</label><input id="ex_quantity" type="number" min="1" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm"></div>' +
+    '</div>' +
+    '<div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">' +
+    '<div><label class="block text-xs font-medium text-slate-500 mb-1">颜色/规格</label><input id="ex_spec" type="text" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" placeholder="如：黑色 / 1200x600"></div>' +
+    '<div><label class="block text-xs font-medium text-slate-500 mb-1">类型</label><select id="ex_type" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm"><option value="换货">换货</option><option value="退货">退货</option></select></div>' +
+    '</div>' +
+    '<div class="mb-4"><label class="block text-xs font-medium text-slate-500 mb-1">原因</label><input id="ex_reason" type="text" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" placeholder="请填写调换货原因"></div>' +
+    '<button onclick="submitExchangeOrder()" class="px-6 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 text-sm">提交申请</button>' +
+    '</div>' +
+    '<div class="bg-white rounded-xl shadow-sm p-6">' +
+    '<h3 class="text-lg font-semibold text-slate-800 mb-4">调换货记录</h3>' +
+    '<div class="overflow-x-auto"><table class="w-full border border-slate-200">' +
+    '<thead class="bg-slate-50"><tr>' +
+    '<th class="px-3 py-2 text-left text-xs font-semibold text-slate-600 border-b border-slate-200">单号</th>' +
+    '<th class="px-3 py-2 text-left text-xs font-semibold text-slate-600 border-b border-slate-200">订单</th>' +
+    '<th class="px-3 py-2 text-left text-xs font-semibold text-slate-600 border-b border-slate-200">产品</th>' +
+    '<th class="px-3 py-2 text-left text-xs font-semibold text-slate-600 border-b border-slate-200">型号</th>' +
+    '<th class="px-3 py-2 text-left text-xs font-semibold text-slate-600 border-b border-slate-200">数量</th>' +
+    '<th class="px-3 py-2 text-left text-xs font-semibold text-slate-600 border-b border-slate-200">原因</th>' +
+    '<th class="px-3 py-2 text-left text-xs font-semibold text-slate-600 border-b border-slate-200">状态</th>' +
+    '<th class="px-3 py-2 text-left text-xs font-semibold text-slate-600 border-b border-slate-200">操作</th>' +
+    '</tr></thead><tbody>' + rowsHtml + '</tbody></table></div>' +
+    '</div>';
+}
+
+async function submitExchangeOrder() {
+  const payload = {
+    orderNo: document.getElementById('ex_orderNo').value.trim(),
+    productName: document.getElementById('ex_productName').value.trim(),
+    productModel: document.getElementById('ex_productModel').value.trim(),
+    quantity: Number(document.getElementById('ex_quantity').value),
+    spec: document.getElementById('ex_spec').value.trim(),
+    type: document.getElementById('ex_type').value,
+    reason: document.getElementById('ex_reason').value.trim()
+  };
+  if (!payload.productName) { showAlertModal('提示', '请填写产品名称'); return; }
+  if (!(payload.quantity > 0)) { showAlertModal('提示', '数量必须为正数'); return; }
+  try {
+    const resp = await fetch('/api/exchange-orders', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+    });
+    const result = await resp.json();
+    if (resp.ok && result.success) { showSuccessModal('调换货申请已提交'); renderProductionExchange(); }
+    else showAlertModal('提示', result.message || '提交失败');
+  } catch (e) { showAlertModal('错误', '提交失败：' + e.message); }
+}
+
+// 审批/处理操作弹窗（可填备注）
+function openExchangeAction(id, status) {
+  const actionLabel = { approved: '审批通过', rejected: '驳回', done: '标记完成', pending: '重新提交' }[status] || '确认操作';
+  const modalId = 'exchangeActionModal';
+  document.getElementById(modalId) && document.getElementById(modalId).remove();
+  const html = '<div id="' + modalId + '" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">' +
+    '<div class="bg-white rounded-xl w-full max-w-sm shadow-xl overflow-hidden">' +
+    '<div class="bg-gradient-to-r from-teal-500 to-teal-600 px-6 py-4"><h3 class="text-lg font-semibold text-white text-center">' + actionLabel + '</h3></div>' +
+    '<div class="p-6">' +
+    '<label class="block text-xs font-medium text-slate-500 mb-1">备注（选填）</label>' +
+    '<textarea id="exchangeActionRemark" rows="3" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500" placeholder="请输入' + actionLabel + '的备注说明"></textarea>' +
+    '</div>' +
+    '<div class="px-6 py-4 bg-slate-50 flex justify-end gap-3">' +
+    '<button onclick="document.getElementById(\'' + modalId + '\').remove()" class="px-6 py-2 border border-slate-300 text-slate-600 rounded-lg hover:bg-slate-100 text-sm">取消</button>' +
+    '<button onclick="submitExchangeAction(\'' + id + '\',\'' + status + '\')" class="px-6 py-2 bg-teal-500 text-white rounded-lg hover:bg-teal-600 text-sm">确认' + actionLabel + '</button>' +
+    '</div></div></div>';
+  document.body.insertAdjacentHTML('beforeend', html);
+}
+
+async function submitExchangeAction(id, status) {
+  const remark = (document.getElementById('exchangeActionRemark') || {}).value || '';
+  try {
+    const resp = await fetch('/api/exchange-orders/' + id, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status, auditRemark: remark })
+    });
+    const result = await resp.json();
+    if (resp.ok && result.success) { showSuccessModal('操作成功'); renderProductionExchange(); }
+    else showAlertModal('提示', result.message || '操作失败');
+  } catch (e) { showAlertModal('错误', '操作失败：' + e.message); }
+}
+
+// 查看调换货详情与审批历史
+async function showExchangeDetail(id) {
+  let rec = (window.__exchangeCache || {})[id];
+  if (!rec) {
+    try {
+      const resp = await fetch('/api/exchange-orders');
+      const list = await resp.json();
+      window.__exchangeCache = {};
+      (list || []).forEach(r => window.__exchangeCache[r.id] = r);
+      rec = window.__exchangeCache[id];
+    } catch (e) { /* 忽略 */ }
+  }
+  if (!rec) { showAlertModal('提示', '未找到该调换货单'); return; }
+  const statusName = { pending: '待审批', approved: '已审批', rejected: '已驳回', done: '已完成' };
+  const aud = (rec.audit || []).slice().reverse().map(a => {
+    const t = a.time ? new Date(a.time).toLocaleString('zh-CN') : '';
+    return '<div class="flex items-start gap-3 py-2 border-b border-slate-100 last:border-0">' +
+      '<span class="mt-1 w-2 h-2 rounded-full bg-teal-400 flex-shrink-0"></span>' +
+      '<div class="flex-1 min-w-0"><p class="text-xs text-slate-700">' + esc(statusName[a.to] || a.to) + (a.operator ? ' · ' + esc(a.operator) : '') + '</p>' +
+      '<p class="text-[11px] text-slate-400">' + t + '</p>' +
+      (a.remark ? '<p class="text-[11px] text-slate-500 mt-0.5">' + esc(a.remark) + '</p>' : '') + '</div></div>';
+  }).join('') || '<p class="text-xs text-slate-400 text-center py-3">暂无操作记录</p>';
+  const modalId = 'exchangeDetailModal';
+  document.getElementById(modalId) && document.getElementById(modalId).remove();
+  const html = '<div id="' + modalId + '" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">' +
+    '<div class="bg-white rounded-xl w-full max-w-md shadow-xl overflow-hidden">' +
+    '<div class="bg-gradient-to-r from-indigo-500 to-indigo-600 px-6 py-4 flex items-center justify-between">' +
+    '<h3 class="text-lg font-semibold text-white">调换货详情</h3>' +
+    '<button onclick="document.getElementById(\'' + modalId + '\').remove()" class="text-white/80 hover:text-white text-xl leading-none">×</button></div>' +
+    '<div class="p-6">' +
+    '<div class="grid grid-cols-2 gap-3 text-sm mb-4">' +
+    '<div><span class="text-slate-400 text-xs">单号</span><p class="font-medium">' + esc(rec.exchangeNo || '-') + '</p></div>' +
+    '<div><span class="text-slate-400 text-xs">关联订单</span><p class="font-medium">' + esc(rec.orderNo || '-') + '</p></div>' +
+    '<div><span class="text-slate-400 text-xs">产品</span><p class="font-medium">' + esc(rec.productName || '-') + ' ' + esc(rec.productModel || '') + '</p></div>' +
+    '<div><span class="text-slate-400 text-xs">数量/类型</span><p class="font-medium">' + (rec.quantity || 0) + ' · ' + esc(rec.type || '换货') + '</p></div>' +
+    '<div class="col-span-2"><span class="text-slate-400 text-xs">原因</span><p class="font-medium">' + esc(rec.reason || '-') + '</p></div>' +
+    '<div class="col-span-2"><span class="text-slate-400 text-xs">当前状态</span><p class="font-semibold">' + esc(statusName[rec.status] || rec.status) + '</p></div>' +
+    '</div>' +
+    '<div class="border-t border-slate-100 pt-3"><p class="text-xs font-medium text-slate-500 mb-2">操作历史</p>' + aud + '</div>' +
+    '</div></div></div>';
+  document.body.insertAdjacentHTML('beforeend', html);
 }
 
 // 产品计数器

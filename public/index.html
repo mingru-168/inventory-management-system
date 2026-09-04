@@ -199,6 +199,32 @@
     .sidebar-third-level-submenu.hidden {
       display: none;
     }
+
+    /* ===== 打印样式：仅打印"订货单"单据区域，隐藏后台管理界面 ===== */
+    @media print {
+      aside, header, .sidebar-dropdown-menu-wrapper, .fade-in > *:not(#order-receipt),
+      #page-title, #page-subtitle {
+        display: none !important;
+      }
+      #app, main, #page-content, main > div, #page-content > div {
+        overflow: visible !important;
+        height: auto !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        box-shadow: none !important;
+      }
+      body, #app, .bg-slate-50 {
+        background: #fff !important;
+      }
+      #order-receipt {
+        display: block !important;
+        border: none !important;
+        box-shadow: none !important;
+      }
+      #order-receipt .fade-in,
+      body * { visibility: hidden; }
+      #order-receipt, #order-receipt * { visibility: visible; }
+    }
   </style>
 </head>
 <body class="bg-slate-50">
@@ -297,8 +323,8 @@
                   <div class="sidebar-dropdown-content-item" onclick="productionSubPage='scheduling'; navigateTo('production');">安排生产</div>
                   <div class="sidebar-dropdown-content-item" onclick="productionSubPage='dispatch'; navigateTo('production');">派工</div>
                   <div class="sidebar-dropdown-content-item" onclick="productionSubPage='stop'; navigateTo('production');">中止生产</div>
-                  <div class="sidebar-dropdown-content-item" onclick="productionSubPage='scheduling'; navigateTo('production');">入通用库</div>
-                  <div class="sidebar-dropdown-content-item" onclick="productionSubPage='scheduling'; navigateTo('production');">调换货</div>
+                  <div class="sidebar-dropdown-content-item" onclick="productionSubPage='stockin'; navigateTo('production');" data-perm="生产管理-入通用库-入库">入通用库</div>
+                  <div class="sidebar-dropdown-content-item" onclick="productionSubPage='exchange'; navigateTo('production');" data-perm="生产管理-调换货-调换">调换货</div>
                 </div>
                 <div class="sidebar-dropdown-content">
                   <div class="sidebar-dropdown-content-item" onclick="productionSubPage='completion-by-order'; navigateTo('production');">按单确认</div>

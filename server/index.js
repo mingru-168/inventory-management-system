@@ -134,7 +134,8 @@ const initialData = {
   allocationRecords: [],
   orderTrackingRecords: [],
   inventoryLocks: [],
-  auditLogs: []
+  auditLogs: [],
+  exchangeRecords: []
 };
 
 // ===== 数据完整性检查：确保所有核心集合存在，防止旧数据缺字段导致崩溃 =====
@@ -143,7 +144,7 @@ function ensureDataIntegrity(obj) {
     'products', 'inventory', 'warehouses', 'customers', 'suppliers', 'salesOrders',
     'purchaseOrders', 'planOrders', 'processes', 'productionOrders', 'financeRecords',
     'stockInRecords', 'productSpecPrices', 'users', 'roles', 'allocationRecords',
-    'orderTrackingRecords', 'inventoryLocks', 'auditLogs'
+    'orderTrackingRecords', 'inventoryLocks', 'auditLogs', 'exchangeRecords'
   ];
   collections.forEach(k => {
     if (!Array.isArray(obj[k])) obj[k] = [];
@@ -504,7 +505,7 @@ app.get('/api/inventory', (req, res) => {
   res.json(data.inventory);
 });
 
-app.put('/api/inventory/:id', (req, res) => {
+app.put('/api/inventory/:id', requirePerm('库存管理', '库存调整', '调整'), (req, res) => {
   const invId = req.params.id;
   const index = data.inventory.findIndex(i => String(i.id) === String(invId));
   if (index !== -1) {
@@ -655,6 +656,196 @@ app.delete('/api/scheduling-orders/:orderNo', (req, res) => {
   }
 });
 
+// 修改派工单某一工序项（改单/改数）
+// 仅允许白名单字段，避免原型污染与越权字段注入；quantity 必须为正数。
+const SCHEDULING_ITEM_FIELDS = ['model', 'productName', 'name', 'color', 'spec', 'size', 'tableColor', 'counterColor', 'followWay', 'receiver', 'followNo', 'quantity'];
+app.put('/api/scheduling-orders/:orderNo/items/:itemIndex', function (req, res) {
+  const orderNo = String(req.params.orderNo || '');
+  const itemIndex = Number(req.params.itemIndex);
+  const order = data.productionOrders.find(o => String(o.orderNo) === orderNo);
+  if (!order) return res.status(404).json({ success: false, message: '未找到该派工单' });
+  if (!Array.isArray(order.items)) return res.status(400).json({ success: false, message: '派工单无工序项' });
+  if (!Number.isInteger(itemIndex) || itemIndex < 0 || itemIndex >= order.items.length) {
+    return res.status(400).json({ success: false, message: '工序序号无效' });
+  }
+  const item = order.items[itemIndex];
+  const changes = {};
+  SCHEDULING_ITEM_FIELDS.forEach(function (key) {
+    if (Object.prototype.hasOwnProperty.call(req.body, key)) {
+      let val = req.body[key];
+      if (key === 'quantity') {
+        const n = Number(val);
+        if (!(n > 0)) return; // 非法数量：忽略，不落库
+        val = n;
+      } else if (typeof val === 'number') {
+        val = String(val);
+      }
+      changes[key] = val;
+    }
+  });
+  if (Object.keys(changes).length === 0) {
+    return res.status(400).json({ success: false, message: '没有可更新的有效字段' });
+  }
+  Object.assign(item, changes);
+  order.updatedAt = new Date().toISOString();
+  saveData();
+  res.json({ success: true, order });
+});
+
+// ===== 入通用库：生产完成后成品进入通用库存 =====
+// 与产品手动入库保持一致：写 stockInRecords 并联动 inventory 数量与 products.stock。
+app.post('/api/common-stock-in', requirePerm('生产管理', '入通用库', '入库'), (req, res) => {
+  const qty = Number(req.body.quantity);
+  if (!(qty > 0)) return res.status(400).json({ success: false, message: '入库数量必须为正数' });
+  const productId = String(req.body.productId || '');
+  if (!productId) return res.status(400).json({ success: false, message: '请选择产品' });
+  if (!data.stockInRecords) data.stockInRecords = [];
+  const prod = data.products.find(p => String(p.id) === productId);
+  const record = {
+    id: req.body.id || generateId(),
+    productId,
+    productName: String(req.body.productName || prod?.type || prod?.name || ''),
+    productModel: String(req.body.productModel || prod?.model || prod?.sku || ''),
+    quantity: qty,
+    warehouse: String(req.body.warehouse || '主仓库'),
+    location: String(req.body.location || ''),
+    color: String(req.body.color || ''),
+    spec: String(req.body.spec || ''),
+    tabletopColor: String(req.body.tabletopColor || ''),
+    batchNo: String(req.body.batchNo || ''),
+    unit: String(req.body.unit || ''),
+    remark: String(req.body.remark || '通用库存入库'),
+    type: '入通用库',
+    operator: req.user ? (req.user.username || '') : '',
+    createdAt: req.body.createdAt || new Date().toISOString()
+  };
+  data.stockInRecords.push(record);
+  // 联动 inventory
+  if (!data.inventory) data.inventory = [];
+  const inv = data.inventory.find(i => String(i.productId) === productId);
+  if (inv) {
+    inv.quantity = (Number(inv.quantity) || 0) + qty;
+    inv.warehouse = record.warehouse || inv.warehouse;
+    inv.location = record.location || inv.location;
+    inv.color = record.color || inv.color;
+    inv.spec = record.spec || inv.spec;
+    inv.tabletopColor = record.tabletopColor || inv.tabletopColor;
+    inv.updatedAt = new Date().toISOString();
+  } else {
+    data.inventory.push({
+      id: 'inv_' + Date.now(),
+      productId,
+      productModel: record.productModel,
+      productName: record.productName,
+      quantity: qty,
+      minStock: 0,
+      warehouse: record.warehouse,
+      location: record.location,
+      color: record.color,
+      spec: record.spec,
+      tabletopColor: record.tabletopColor,
+      createdAt: new Date().toISOString()
+    });
+  }
+  // 联动 products.stock
+  if (prod) {
+    prod.stock = (Number(prod.stock) || 0) + qty;
+    prod.updatedAt = new Date().toISOString();
+  }
+  saveData();
+  const freshRecords = (data.inventory || []).filter(i => String(i.productId) === productId);
+  res.json({ success: true, stockInRecord: record, inventory: freshRecords });
+});
+
+// ===== 调换货：记录客户调换货申请 =====
+app.get('/api/exchange-orders', (req, res) => {
+  res.json(data.exchangeRecords || []);
+});
+
+app.post('/api/exchange-orders', requirePerm('生产管理', '调换货', '调换'), (req, res) => {
+  if (!data.exchangeRecords) data.exchangeRecords = [];
+  const qty = Number(req.body.quantity);
+  if (!(qty > 0)) return res.status(400).json({ success: false, message: '调换数量必须为正数' });
+  const record = {
+    id: generateId(),
+    exchangeNo: String(req.body.exchangeNo || ('EX' + Date.now())),
+    orderNo: String(req.body.orderNo || ''),
+    productName: String(req.body.productName || ''),
+    productModel: String(req.body.productModel || ''),
+    color: String(req.body.color || ''),
+    spec: String(req.body.spec || ''),
+    quantity: qty,
+    reason: String(req.body.reason || ''),
+    type: String(req.body.type || '换货'),
+    status: 'pending',
+    remark: String(req.body.remark || ''),
+    operator: req.user ? (req.user.username || '') : '',
+    createdAt: new Date().toISOString()
+  };
+  data.exchangeRecords.push(record);
+  saveData();
+  res.json({ success: true, record });
+});
+
+app.put('/api/exchange-orders/:id', requirePerm('生产管理', '调换货', '调换'), (req, res) => {
+  if (!data.exchangeRecords) data.exchangeRecords = [];
+  const idx = data.exchangeRecords.findIndex(r => String(r.id) === String(req.params.id));
+  if (idx === -1) return res.status(404).json({ success: false, message: '未找到调换货单' });
+  const rec = data.exchangeRecords[idx];
+  const cur = rec.status || 'pending';
+
+  // 允许的状态流转：pending→approved/rejected → done
+  const next = String(req.body.status || '');
+  const VALID_TRANSITIONS = {
+    pending: ['approved', 'rejected'],
+    approved: ['done', 'rejected', 'pending'],
+    rejected: ['pending'],
+    done: ['pending']
+  };
+  if (next && !(VALID_TRANSITIONS[cur] || []).includes(next)) {
+    return res.status(400).json({ success: false, message: `状态不能从「${cur}」变更为「${next}」` });
+  }
+
+  // 更新备注字段（允许编辑）
+  if (Object.prototype.hasOwnProperty.call(req.body, 'remark')) {
+    rec.remark = String(req.body.remark);
+  }
+  if (Object.prototype.hasOwnProperty.call(req.body, 'reason')) {
+    rec.reason = String(req.body.reason);
+  }
+
+  // 记录审批/处理信息
+  if (next) {
+    rec.status = next;
+    if (next === 'approved') {
+      rec.approvedAt = new Date().toISOString();
+      rec.approvedBy = req.user ? (req.user.username || req.user.name || '') : '';
+      rec.approvalRemark = String(req.body.approvalRemark || req.body.remark || '');
+    } else if (next === 'rejected') {
+      rec.rejectedAt = new Date().toISOString();
+      rec.rejectedBy = req.user ? (req.user.username || req.user.name || '') : '';
+      rec.rejectRemark = String(req.body.approvalRemark || req.body.rejectRemark || '');
+    } else if (next === 'done') {
+      rec.completedAt = new Date().toISOString();
+      rec.completedBy = req.user ? (req.user.username || req.user.name || '') : '';
+    }
+  }
+
+  // 审批历史记录
+  if (!rec.audit) rec.audit = [];
+  const operator = req.user ? (req.user.username || req.user.name || '') : '';
+  const time = new Date().toISOString();
+  if (next && next !== cur) {
+    rec.audit.push({ from: cur, to: next, operator, time, remark: String(req.body.auditRemark || '') });
+  } else if (Object.prototype.hasOwnProperty.call(req.body, 'remark')) {
+    rec.audit.push({ from: cur, to: cur, operator, time, remark: '更新备注：' + String(req.body.remark) });
+  }
+
+  rec.updatedAt = time;
+  saveData();
+  res.json({ success: true, record: rec });
+});
+
 app.get('/api/finance-records', (req, res) => {
   res.json(data.financeRecords);
 });
@@ -663,14 +854,64 @@ app.get('/api/dashboard', (req, res) => {
   const totalIncome = data.financeRecords.filter(r => r.type === 'income').reduce((s, r) => s + r.amount, 0);
   const totalExpense = data.financeRecords.filter(r => r.type === 'expense').reduce((s, r) => s + r.amount, 0);
   const pendingOrders = data.salesOrders.filter(o => o.status === 'pending').length;
-  
+
+  // ===== 销售趋势：按日汇总收入（最近 14 天，含空日补零） =====
+  const trendMap = {};
+  data.financeRecords.forEach(r => {
+    if (r.type !== 'income') return;
+    const day = String(r.date || '').slice(0, 10);
+    if (!day) return;
+    trendMap[day] = (trendMap[day] || 0) + (r.amount || 0);
+  });
+  const salesTrend = [];
+  const today = new Date();
+  for (let i = 13; i >= 0; i--) {
+    const d = new Date(today.getTime() - i * 86400000);
+    const key = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+    salesTrend.push({ date: key, amount: trendMap[key] || 0 });
+  }
+
+  // ===== 订单状态分布 =====
+  const statusMap = {};
+  data.salesOrders.forEach(o => {
+    const st = o.status || 'unknown';
+    statusMap[st] = (statusMap[st] || 0) + 1;
+  });
+  const orderStatusDist = Object.keys(statusMap).map(st => ({ status: st, count: statusMap[st] }));
+
+  // ===== 库存预警统计 =====
+  let lowStock = 0;       // 低于安全库存
+  let outOfStock = 0;     // 已缺货（stock<=0 但有安全库存）
+  let stockAlertCount = 0;
+  data.inventory.forEach(i => {
+    const min = Number(i.minStock) || 0;
+    const qty = Number(i.quantity) || 0;
+    if (min > 0 && qty < min) { lowStock++; stockAlertCount++; }
+    else if (min > 0 && qty <= 0) { outOfStock++; stockAlertCount++; }
+  });
+
+  // ===== 品类占比：按产品 type 汇总库存数量 =====
+  const typeMap = {};
+  data.inventory.forEach(i => {
+    const p = data.products.find(pp => String(pp.id) === String(i.productId));
+    const type = (p && (p.type || p.name)) || (i.productName) || '未分类';
+    typeMap[type] = (typeMap[type] || 0) + (Number(i.quantity) || 0);
+  });
+  const categoryDist = Object.keys(typeMap).map(t => ({ category: t, value: typeMap[t] })).sort((a, b) => b.value - a.value);
+
   res.json({
     totalIncome,
     totalExpense,
     netProfit: totalIncome - totalExpense,
     productCount: data.products.length,
     pendingOrders,
-    recentSalesOrders: data.salesOrders.slice(0, 3)
+    recentSalesOrders: data.salesOrders.slice(0, 3),
+    salesTrend,
+    orderStatusDist,
+    lowStock,
+    outOfStock,
+    stockAlertCount,
+    categoryDist
   });
 });
 
@@ -731,8 +972,8 @@ app.post('/api/sales-orders', requirePerm('销售管理', '销售订单', '添�
     id: generateId(),
     type: 'income',
     category: '销售收入',
-    amount: order.totalAmount,
-    date: order.orderDate,
+    amount: Number(order.totalAmount ?? order.total_amount ?? order.final_amount ?? order.amount ?? 0),
+    date: order.orderDate || order.order_date || new Date().toISOString().slice(0, 10),
     description: `销售订单 ${order.orderNo}`,
     relatedOrderId: order.id
   });
@@ -1154,8 +1395,8 @@ app.post('/api/purchase-orders', (req, res) => {
     id: generateId(),
     type: 'expense',
     category: '采购支出',
-    amount: order.totalAmount,
-    date: order.orderDate,
+    amount: Number(order.totalAmount ?? order.total_amount ?? order.final_amount ?? order.amount ?? 0),
+    date: order.orderDate || order.order_date || new Date().toISOString().slice(0, 10),
     description: `采购订单 ${order.orderNo}`,
     relatedOrderId: order.id
   });
