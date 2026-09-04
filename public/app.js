@@ -7977,108 +7977,391 @@ function renderPurchaseBom() {
 }
 
 function renderPurchaseOrder() {
-  document.getElementById('page-title').textContent = '采购单管';
-  document.getElementById('page-subtitle').textContent = '创建和管理采购订';
+  document.getElementById('page-title').textContent = '采购单管理';
+  document.getElementById('page-subtitle').textContent = '创建和管理采购订单';
   
   const container = document.getElementById('page-content');
   if (!container) return;
   
+  const orders = Array.isArray(data.purchaseOrders) ? data.purchaseOrders.slice().sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || '')) : [];
+  const suppliers = Array.isArray(data.suppliers) ? data.suppliers : [];
+  
+  const statusMap = { pending: ['待收货', 'bg-amber-100 text-amber-700'], received: ['已收货', 'bg-blue-100 text-blue-700'], completed: ['已结算', 'bg-emerald-100 text-emerald-700'], cancelled: ['已取消', 'bg-red-100 text-red-700'] };
+  const supName = id => { const s = suppliers.find(x => String(x.id) === String(id)); return s ? (s.name || '') : ''; };
+  const fmtAmt = o => formatCurrency(Number(o.totalAmount ?? o.total_amount ?? 0));
+  
+  const rows = orders.map(o => {
+    const st = statusMap[o.status] || ['未知', 'bg-slate-100 text-slate-600'];
+    return `
+      <tr class="border-b border-slate-100 hover:bg-slate-50">
+        <td class="px-4 py-3 text-sm text-slate-700">${esc(o.orderNo || '')}</td>
+        <td class="px-4 py-3 text-sm text-slate-700">${esc(o.supplierName || o.supplier || supName(o.supplierId) || '-')}</td>
+        <td class="px-4 py-3 text-sm text-slate-700">${esc(o.warehouse || '主仓库')}</td>
+        <td class="px-4 py-3 text-sm text-slate-700 font-medium">${fmtAmt(o)}</td>
+        <td class="px-4 py-3 text-sm"><span class="px-2 py-1 rounded-full text-xs ${st[1]}">${st[0]}</span></td>
+        <td class="px-4 py-3 text-sm text-slate-500">${esc((o.orderDate || o.order_date || (o.createdAt||'').slice(0,10) || '') )}</td>
+        <td class="px-4 py-3 text-sm">
+          <div class="flex gap-2">
+            <button onclick="viewPurchaseDetail('${o.id}')" class="px-3 py-1 text-xs border border-slate-300 rounded hover:bg-slate-100">详情</button>
+            ${o.status === 'pending' ? `<button onclick="receivePurchase('${o.id}')" class="px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700">收货</button>` : ''}
+            ${o.status === 'pending' ? `<button onclick="completePurchase('${o.id}')" class="px-3 py-1 text-xs bg-emerald-600 text-white rounded hover:bg-emerald-700">结算</button>` : ''}
+            ${o.status === 'pending' ? `<button onclick="deletePurchase('${o.id}')" class="px-3 py-1 text-xs border border-red-300 text-red-600 rounded hover:bg-red-50">作废</button>` : ''}
+          </div>
+        </td>
+      </tr>`;
+  }).join('');
+  
   container.innerHTML = `
     <div class="fade-in">
-    <div class="mb-6 flex items-center justify-between">
-      <h3 class="text-lg font-semibold text-slate-800">采购单列表</h3>
-      <button onclick="renderPurchaseOrder()" class="px-4 py-2 bg-teal-500 text-white rounded-lg hover:bg-teal-600">
-        创建采购
-      </button>
-    </div>
-    
-    <div class="bg-white rounded-xl shadow-sm overflow-hidden">
-      <div class="p-12 text-center text-slate-500">
-        <p>采购单管理功能开发中...</p>
+      <div class="mb-6 flex items-center justify-between">
+        <h3 class="text-lg font-semibold text-slate-800">采购单管理</h3>
+        <div class="flex gap-2">
+          <button onclick="renderPurchaseReturnsList()" class="px-4 py-2 border border-slate-300 text-slate-600 rounded-lg hover:bg-slate-100 text-sm">退货记录</button>
+          <button onclick="openCreatePurchase()" class="px-4 py-2 bg-teal-500 text-white rounded-lg hover:bg-teal-600 text-sm">创建采购单</button>
+        </div>
+      </div>
+      <div class="bg-white rounded-xl shadow-sm overflow-hidden">
+        <div class="overflow-x-auto">
+          <table class="w-full divide-y divide-slate-200">
+            <thead>
+              <tr class="bg-slate-50 text-left text-xs font-medium text-slate-500">
+                <th class="px-4 py-3">采购单号</th><th class="px-4 py-3">供应商</th><th class="px-4 py-3">仓库</th>
+                <th class="px-4 py-3">金额</th><th class="px-4 py-3">状态</th><th class="px-4 py-3">日期</th><th class="px-4 py-3">操作</th>
+              </tr>
+            </thead>
+            <tbody>${rows || '<tr><td colspan="7" class="px-4 py-12 text-center text-slate-400 text-sm">暂无采购单，点击右上角创建</td></tr>'}</tbody>
+          </table>
+        </div>
       </div>
     </div>
-    </div>
   `;
+}
+
+function openCreatePurchase() {
+  const suppliers = Array.isArray(data.suppliers) ? data.suppliers : [];
+  const products = Array.isArray(data.products) ? data.products : [];
+  const modalId = 'purchaseCreateModal';
+  document.getElementById(modalId) && document.getElementById(modalId).remove();
+  const opts = products.map(p => `<option value="${esc(p.id)}">${esc(p.name || p.type || p.id)}${p.model ? ' / ' + esc(p.model) : ''}</option>`).join('');
+  const sups = suppliers.map(s => `<option value="${esc(s.id)}">${esc(s.name)}</option>`).join('');
+  const html = `
+    <div id="${modalId}" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+      <div class="bg-white rounded-xl w-full max-w-2xl max-h-[90vh] overflow-auto shadow-xl">
+        <div class="bg-gradient-to-r from-teal-500 to-teal-600 px-6 py-4 flex items-center justify-between">
+          <h3 class="text-lg font-semibold text-white">创建采购单</h3>
+          <button onclick="document.getElementById('${modalId}').remove()" class="text-white/80 hover:text-white text-2xl leading-none">&times;</button>
+        </div>
+        <div class="p-6 space-y-4">
+          <div class="grid grid-cols-2 gap-4">
+            <div>
+              <label class="block text-xs font-medium text-slate-500 mb-1">供应商 *</label>
+              <select id="po_supplier" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500">${sups || '<option value="">请先在资料管理添加供应商</option>'}</select>
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-slate-500 mb-1">收货仓库</label>
+              <select id="po_warehouse" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"><option>主仓库</option><option>配件仓</option></select>
+            </div>
+          </div>
+          <div class="grid grid-cols-2 gap-4">
+            <div>
+              <label class="block text-xs font-medium text-slate-500 mb-1">下单日期</label>
+              <input type="date" id="po_date" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" value="${new Date().toISOString().slice(0,10)}">
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-slate-500 mb-1">预计到货</label>
+              <input type="date" id="po_expected" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm">
+            </div>
+          </div>
+          <div>
+            <div class="flex items-center justify-between mb-2">
+              <label class="text-xs font-medium text-slate-500">采购明细</label>
+              <button onclick="addPurchaseItemRow()" class="px-3 py-1 text-xs bg-teal-100 text-teal-700 rounded hover:bg-teal-200">+ 添加一行</button>
+            </div>
+            <div id="po_items" class="space-y-2"></div>
+            <div class="flex justify-end mt-3 pr-2">
+              <span class="text-sm text-slate-600">合计：<span id="po_total" class="font-bold text-teal-600 text-base">0.00</span> 元</span>
+            </div>
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-slate-500 mb-1">备注</label>
+            <textarea id="po_remark" rows="2" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"></textarea>
+          </div>
+        </div>
+        <div class="px-6 py-4 bg-slate-50 flex justify-end gap-3 rounded-b-xl">
+          <button onclick="document.getElementById('${modalId}').remove()" class="px-6 py-2 border border-slate-300 text-slate-600 rounded-lg hover:bg-slate-100 text-sm">取消</button>
+          <button onclick="submitPurchase('${modalId}')" class="px-6 py-2 bg-teal-500 text-white rounded-lg hover:bg-teal-600 text-sm">提交采购单</button>
+        </div>
+      </div>
+    </div>`;
+  document.body.insertAdjacentHTML('beforeend', html);
+  addPurchaseItemRow();
 }
 
 function renderPurchaseReceive() {
-  document.getElementById('page-title').textContent = '材料收货';
-  document.getElementById('page-subtitle').textContent = '材料采购收货管理';
-  
-  const container = document.getElementById('page-content');
-  if (!container) return;
-  
-  container.innerHTML = `
-    <div class="fade-in">
-    <div class="mb-6 flex items-center justify-between">
-      <h3 class="text-lg font-semibold text-slate-800">材料收货</h3>
-      <button onclick="renderPurchaseReceive()" class="px-4 py-2 bg-teal-500 text-white rounded-lg hover:bg-teal-600">
-        无采购单收货
-      </button>
-    </div>
-    
-    <div class="bg-white rounded-xl shadow-sm overflow-hidden">
-      <div class="p-12 text-center text-slate-500">
-        <p>材料收货功能开发中...</p>
-      </div>
-    </div>
-    </div>
-  `;
+  renderPurchaseReceivePage('材料');
 }
 
 function renderPurchaseReceiveProduct() {
-  document.getElementById('page-title').textContent = '成品收货';
-  document.getElementById('page-subtitle').textContent = '成品采购收货管理';
+  renderPurchaseReceivePage('成品');
+}
+
+// 通用收货页：展示待收货采购单，确认后调用后端收货接口入库并记录
+async function renderPurchaseReceivePage(label) {
+  document.getElementById('page-title').textContent = label + '收货';
+  document.getElementById('page-subtitle').textContent = label + '采购收货管理';
   
   const container = document.getElementById('page-content');
   if (!container) return;
   
+  const orders = Array.isArray(data.purchaseOrders) ? data.purchaseOrders.filter(o => ['pending'].includes(o.status)) : [];
+  const inRecords = Array.isArray(data.stockInRecords) ? data.stockInRecords.filter(r => r.type === '采购收货').slice().reverse() : [];
+  const suppliers = Array.isArray(data.suppliers) ? data.suppliers : [];
+  const supName = id => { const s = suppliers.find(x => String(x.id) === String(id)); return s ? (s.name || '') : ''; };
+  
+  const orderCards = orders.map(o => {
+    const items = Array.isArray(o.items) ? o.items : [];
+    const itemLines = items.map(it => `
+      <div class="flex items-center justify-between text-sm py-1">
+        <span class="text-slate-700">${esc(it.productName || it.name || it.productId)} ${it.spec ? '· ' + esc(it.spec) : ''} x ${it.quantity}</span>
+        <span class="text-slate-500">${formatCurrency(Number(it.unitPrice || it.price || 0))}/${esc(it.unit || '件')}</span>
+      </div>`).join('');
+    return `
+      <div class="border border-slate-200 rounded-lg p-4 mb-3">
+        <div class="flex items-center justify-between mb-2">
+          <div>
+            <span class="font-semibold text-slate-800 text-sm">${esc(o.orderNo || '')}</span>
+            <span class="ml-2 text-xs text-slate-500">${esc(o.supplierName || o.supplier || supName(o.supplierId) || '-')}</span>
+          </div>
+          <div class="flex items-center gap-2">
+            <span class="text-xs font-semibold text-teal-600">合计 ${formatCurrency(Number(o.totalAmount ?? o.total_amount ?? 0))}</span>
+            <button onclick="receivePurchase('${o.id}')" class="px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700">确认收货</button>
+          </div>
+        </div>
+        <div class="bg-slate-50 rounded p-2">${itemLines || '<div class="text-xs text-slate-400">无明细</div>'}</div>
+      </div>`;
+  }).join('');
+  
+  const recRows = inRecords.slice(0, 20).map(r => `
+    <tr class="border-b border-slate-100 hover:bg-slate-50">
+      <td class="px-4 py-2 text-sm text-slate-700">${esc(r.productName || r.productId)}</td>
+      <td class="px-4 py-2 text-sm text-slate-700">${r.quantity}</td>
+      <td class="px-4 py-2 text-sm text-slate-700">${esc(r.warehouse || '-')}</td>
+      <td class="px-4 py-2 text-sm text-slate-500">${esc(r.remark || '')}</td>
+      <td class="px-4 py-2 text-sm text-slate-400">${esc((r.createdAt || '').slice(0,16).replace('T',' '))}</td>
+    </tr>`).join('');
+  
   container.innerHTML = `
-    <div class="fade-in">
-    <div class="mb-6 flex items-center justify-between">
-      <h3 class="text-lg font-semibold text-slate-800">成品收货</h3>
-      <button onclick="renderPurchaseReceiveProduct()" class="px-4 py-2 bg-teal-500 text-white rounded-lg hover:bg-teal-600">
-        无采购单收货
-      </button>
-    </div>
-    
-    <div class="bg-white rounded-xl shadow-sm overflow-hidden">
-      <div class="p-12 text-center text-slate-500">
-        <p>成品收货功能开发中...</p>
+    <div class="fade-in grid lg:grid-cols-2 gap-4">
+      <div class="bg-white rounded-xl shadow-sm p-5">
+        <h3 class="text-base font-semibold text-slate-800 mb-3">待收货采购单</h3>
+        ${orderCards || '<div class="p-8 text-center text-slate-400 text-sm">暂无待收货采购单</div>'}
       </div>
-    </div>
+      <div class="bg-white rounded-xl shadow-sm p-5">
+        <h3 class="text-base font-semibold text-slate-800 mb-3">最近收货记录</h3>
+        <div class="overflow-x-auto">
+          <table class="w-full">
+            <thead><tr class="text-left text-xs text-slate-500"><th class="py-1">产品</th><th class="py-1">数量</th><th class="py-1">仓库</th><th class="py-1">备注</th><th class="py-1">时间</th></tr></thead>
+            <tbody>${recRows || '<tr><td colspan="5" class="py-8 text-center text-slate-400 text-sm">暂无收货记录</td></tr>'}</tbody>
+          </table>
+        </div>
+      </div>
     </div>
   `;
 }
 
-function renderPurchaseReturn() {
-  document.getElementById('page-title').textContent = '退货管理';
-  document.getElementById('page-subtitle').textContent = '材料/成品退货管理';
-  
+function renderPurchaseReturnsList() {
+  document.getElementById('page-title').textContent = '采购退货记录';
+  document.getElementById('page-subtitle').textContent = '查看采购退货记录';
   const container = document.getElementById('page-content');
   if (!container) return;
-  
-  container.innerHTML = `
-    <div class="fade-in">
-    <div class="mb-6 flex items-center justify-between">
-      <h3 class="text-lg font-semibold text-slate-800">退货单列表</h3>
-      <div class="flex gap-2">
-        <button onclick="renderPurchaseReturn()" class="px-4 py-2 bg-teal-500 text-white rounded-lg hover:bg-teal-600">
-          材料退货
-        </button>
-        <button onclick="renderPurchaseReturn()" class="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600">
-          成品退货
-        </button>
+  container.innerHTML = '<div class="py-20 text-center text-slate-400">加载中...</div>';
+  (async () => {
+    let recs = [];
+    try { recs = await fetch('/api/purchase-returns').then(r => r.json()); } catch (e) { console.error(e); }
+    const products = Array.isArray(data.products) ? data.products : [];
+    const pName = id => { const p = products.find(x => String(x.id) === String(id)); return p ? (p.name || p.type || '') : ''; };
+    container.innerHTML = `
+      <div class="fade-in">
+        <div class="mb-6 flex items-center justify-between">
+          <h3 class="text-lg font-semibold text-slate-800">采购退货记录</h3>
+          <button onclick="openCreatePurchaseReturn()" class="px-4 py-2 bg-teal-500 text-white rounded-lg hover:bg-teal-600 text-sm">+ 新建退货</button>
+        </div>
+        <div class="bg-white rounded-xl shadow-sm overflow-hidden">
+          <table class="w-full divide-y divide-slate-200">
+            <thead><tr class="bg-slate-50 text-left text-xs text-slate-500"><th class="px-4 py-3">产品</th><th class="px-4 py-3">数量</th><th class="px-4 py-3">冲减金额</th><th class="px-4 py-3">原因</th><th class="px-4 py-3">操作人</th><th class="px-4 py-3">时间</th></tr></thead>
+            <tbody>${(recs || []).map(r => `<tr class="border-b border-slate-100"><td class="px-4 py-3 text-sm text-slate-700">${esc(r.productName || pName(r.productId) || r.productId)}</td><td class="px-4 py-3 text-sm">${r.quantity}</td><td class="px-4 py-3 text-sm text-red-600">${formatCurrency(Math.abs(Number(r.amount) || 0))}</td><td class="px-4 py-3 text-sm text-slate-500">${esc(r.returnReason || '-')}</td><td class="px-4 py-3 text-sm text-slate-500">${esc(r.operator || '-')}</td><td class="px-4 py-3 text-sm text-slate-400">${esc((r.createdAt || '').slice(0,16).replace('T',' '))}</td></tr>`).join('') || '<tr><td colspan="6" class="px-4 py-12 text-center text-slate-400 text-sm">暂无退货记录</td></tr>'}
+            </tbody>
+          </table>
+        </div>
+      </div>`;
+  })();
+}
+
+function renderPurchaseReturn() {
+  renderPurchaseReturnsList();
+}
+
+// ===== 采购单/收货/退货 操作函数 =====
+function addPurchaseItemRow() {
+  const products = Array.isArray(data.products) ? data.products : [];
+  const wrap = document.getElementById('po_items');
+  if (!wrap) return;
+  const opts = products.map(p => `<option value="${esc(p.id)}" data-price="${p.price || ''}">${esc(p.name || p.type || p.id)}${p.model ? ' / ' + esc(p.model) : ''}</option>`).join('');
+  const row = document.createElement('div');
+  row.className = 'grid grid-cols-[1fr_90px_90px_28px] gap-2 items-center po-item-row';
+  row.innerHTML = `
+    <select class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm po-item-prod" onchange="calcPurchaseTotal()">
+      <option value="">选择产品</option>${opts}
+    </select>
+    <input type="number" min="1" placeholder="数量" value="1" class="w-full px-2 py-2 border border-slate-200 rounded-lg text-sm po-item-qty" oninput="calcPurchaseTotal()">
+    <input type="number" min="0" step="0.01" placeholder="单价" class="w-full px-2 py-2 border border-slate-200 rounded-lg text-sm po-item-price" oninput="calcPurchaseTotal()">
+    <button onclick="this.parentElement.remove(); calcPurchaseTotal();" class="text-red-400 hover:text-red-600 text-lg leading-none">&times;</button>`;
+  wrap.appendChild(row);
+  const priceInput = row.querySelector('.po-item-price');
+  priceInput.value = '';
+  calcPurchaseTotal();
+}
+
+function calcPurchaseTotal() {
+  const totalEl = document.getElementById('po_total');
+  if (!totalEl) return;
+  let total = 0;
+  document.querySelectorAll('.po-item-row').forEach(r => {
+    const sel = r.querySelector('.po-item-prod');
+    const qty = Number(r.querySelector('.po-item-qty').value) || 0;
+    let price = Number(r.querySelector('.po-item-price').value);
+    if (!price) price = Number((sel.options[sel.selectedIndex] || {}).dataset.price || 0);
+    total += qty * price;
+  });
+  totalEl.textContent = total.toFixed(2);
+}
+
+async function submitPurchase(modalId) {
+  const suppliers = Array.isArray(data.suppliers) ? data.suppliers : [];
+  const supplierId = document.getElementById('po_supplier').value;
+  if (!supplierId) { showAlertModal('提示', '请选择供应商'); return; }
+  const rows = [];
+  document.querySelectorAll('#po_items .po-item-row').forEach(r => {
+    const sel = r.querySelector('.po-item-prod');
+    const qty = Number(r.querySelector('.po-item-qty').value) || 0;
+    let price = Number(r.querySelector('.po-item-price').value);
+    if (!price) price = Number((sel.options[sel.selectedIndex] || {}).dataset.price || 0);
+    const pid = sel.value;
+    if (!pid || qty <= 0) return;
+    const p = suppliers.length > 0 ? data.products.find(x => String(x.id) === String(pid)) : null;
+    rows.push({ productId: pid, productName: p ? (p.name || p.type || '') : '', productModel: p ? (p.model || '') : '', spec: p ? (p.spec || '') : '', unit: p ? (p.unit || '') : '', quantity: qty, unitPrice: price, price, amount: qty * price, totalPrice: qty * price });
+  });
+  if (!rows.length) { showAlertModal('提示', '请至少添加一个采购明细'); return; }
+  const totalAmount = rows.reduce((s, r) => s + r.quantity * r.unitPrice, 0);
+  const supplier = data.suppliers.find(s => String(s.id) === String(supplierId)) || {};
+  const body = {
+    supplierId, supplierName: supplier.name || '',
+    orderDate: document.getElementById('po_date').value,
+    expectedDate: document.getElementById('po_expected').value,
+    warehouse: document.getElementById('po_warehouse').value,
+    remark: document.getElementById('po_remark').value,
+    items: rows, totalAmount, status: 'pending'
+  };
+  try {
+    const res = await fetch('/api/purchase-orders', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const j = await res.json();
+    if (res.ok) { showSuccessModal('采购单创建成功：' + (j.orderNo || '')); document.getElementById(modalId) && document.getElementById(modalId).remove(); await fetchData(); renderPurchaseOrder(); }
+    else showAlertModal('创建失败', j.message || j.error || '未知错误');
+  } catch (e) { showAlertModal('创建失败', e.message); }
+}
+
+function viewPurchaseDetail(id) {
+  const o = (data.purchaseOrders || []).find(x => String(x.id) === String(id));
+  if (!o) return;
+  const items = Array.isArray(o.items) ? o.items : [];
+  const supName = (data.suppliers || []).find(s => String(s.id) === String(o.supplierId));
+  const rows = items.map(it => `<tr class="border-b border-slate-100"><td class="px-3 py-2 text-sm">${esc(it.productName || it.name || it.productId)}</td><td class="px-3 py-2 text-sm">${it.quantity}</td><td class="px-3 py-2 text-sm">${formatCurrency(Number(it.unitPrice || it.price || 0))}</td><td class="px-3 py-2 text-sm">${formatCurrency(Number(it.amount || it.totalPrice || it.quantity * (it.unitPrice || 0) || 0))}</td></tr>`).join('');
+  showAlertModal('采购单详情 ' + (o.orderNo || ''), `
+    <div class="text-left text-sm space-y-1 text-slate-700">
+      <div>供应商：${esc(o.supplierName || (supName && supName.name) || '-')}</div>
+      <div>仓库：${esc(o.warehouse || '-')}　日期：${esc((o.orderDate || o.order_date || ''))}</div>
+      <table class="w-full mt-2 text-sm"><thead><tr class="text-left text-xs text-slate-500"><th class="py-1">产品</th><th class="py-1">数量</th><th class="py-1">单价</th><th class="py-1">金额</th></tr></thead><tbody>${rows || '<tr><td class="py-3 text-slate-400">无明细</td></tr>'}</tbody></table>
+      <div class="text-right font-semibold mt-2">合计：${formatCurrency(Number(o.totalAmount ?? o.total_amount ?? 0))}</div>
+      <div class="text-slate-500 text-xs">备注：${esc(o.remark || o.note || '-')}</div>
+    </div>`);
+}
+
+async function receivePurchase(id) {
+  const o = (data.purchaseOrders || []).find(x => String(x.id) === String(id));
+  if (!confirm('确认收货 ' + (o && o.orderNo || '') + ' 并入库？')) return;
+  try {
+    const res = await fetch('/api/purchase-orders/' + id + '/receive', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'received' }) });
+    const j = await res.json();
+    if (res.ok) { showSuccessModal('收货成功，库存已更新'); await fetchData(); renderPurchaseReceivePage('材料'); }
+    else showAlertModal('收货失败', j.message || j.error || '未知错误');
+  } catch (e) { showAlertModal('收货失败', e.message); }
+}
+
+async function completePurchase(id) {
+  const o = (data.purchaseOrders || []).find(x => String(x.id) === String(id));
+  if (!confirm('确认 ' + (o && o.orderNo || '') + ' 完成结算（将入库）？')) return;
+  try {
+    const res = await fetch('/api/purchase-orders/' + id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'completed' }) });
+    const j = await res.json();
+    if (res.ok) { showSuccessModal('采购单已结算并入库'); await fetchData(); renderPurchaseOrder(); }
+    else showAlertModal('操作失败', j.message || j.error || '未知错误');
+  } catch (e) { showAlertModal('操作失败', e.message); }
+}
+
+async function deletePurchase(id) {
+  const o = (data.purchaseOrders || []).find(x => String(x.id) === String(id));
+  if (!confirm('确认作废并删除 ' + (o && o.orderNo || '') + '？此操作不可恢复！')) return;
+  try {
+    const res = await fetch('/api/purchase-orders/' + id, { method: 'DELETE' });
+    const j = await res.json();
+    if (res.ok) { showSuccessModal('采购单已作废删除'); await fetchData(); renderPurchaseOrder(); }
+    else showAlertModal('作废失败', j.message || j.error || '未知错误');
+  } catch (e) { showAlertModal('作废失败', e.message); }
+}
+
+function openCreatePurchaseReturn() {
+  const products = Array.isArray(data.products) ? data.products : [];
+  const modalId = 'purchaseReturnModal';
+  document.getElementById(modalId) && document.getElementById(modalId).remove();
+  const opts = products.map(p => `<option value="${esc(p.id)}">${esc(p.name || p.type || p.id)}</option>`).join('');
+  const poOpts = ['<option value="">不关联采购单</option>'].concat((data.purchaseOrders || []).map(o => `<option value="${esc(o.id)}">${esc(o.orderNo)}</option>`)).join('');
+  document.body.insertAdjacentHTML('beforeend', `
+    <div id="${modalId}" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+      <div class="bg-white rounded-xl w-full max-w-md shadow-xl overflow-hidden">
+        <div class="bg-gradient-to-r from-red-500 to-red-600 px-6 py-4"><h3 class="text-lg font-semibold text-white text-center">新建采购退货</h3></div>
+        <div class="p-6 space-y-4">
+          <div>
+            <label class="block text-xs font-medium text-slate-500 mb-1">产品 *</label>
+            <select id="pr_product" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm">${opts}</select>
+          </div>
+          <div><label class="block text-xs font-medium text-slate-500 mb-1">关联采购单</label><select id="pr_po" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm">${poOpts}</select></div>
+          <div class="grid grid-cols-2 gap-4">
+            <div><label class="block text-xs font-medium text-slate-500 mb-1">数量 *</label><input id="pr_qty" type="number" min="1" value="1" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm"></div>
+            <div><label class="block text-xs font-medium text-slate-500 mb-1">单价(冲减)</label><input id="pr_price" type="number" min="0" step="0.01" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" placeholder="留空自动取采购价"></div>
+          </div>
+          <div><label class="block text-xs font-medium text-slate-500 mb-1">退货原因</label><textarea id="pr_reason" rows="2" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm"></textarea></div>
+        </div>
+        <div class="px-6 py-4 bg-slate-50 flex justify-end gap-3">
+          <button onclick="document.getElementById('${modalId}').remove()" class="px-6 py-2 border border-slate-300 text-slate-600 rounded-lg hover:bg-slate-100 text-sm">取消</button>
+          <button onclick="submitPurchaseReturn('${modalId}')" class="px-6 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 text-sm">提交退货</button>
+        </div>
       </div>
-    </div>
-    
-    <div class="bg-white rounded-xl shadow-sm overflow-hidden">
-      <div class="p-12 text-center text-slate-500">
-        <p>退货管理功能开发中...</p>
-      </div>
-    </div>
-    </div>
-  `;
+    </div>`);
+}
+
+async function submitPurchaseReturn(modalId) {
+  const productId = document.getElementById('pr_product').value;
+  const qty = Number(document.getElementById('pr_qty').value) || 0;
+  if (qty <= 0) { showAlertModal('提示', '请填写正确的退货数量'); return; }
+  const body = { productId, quantity: qty, purchaseOrderId: document.getElementById('pr_po').value, returnReason: document.getElementById('pr_reason').value };
+  const price = Number(document.getElementById('pr_price').value);
+  if (price) body.amount = price;
+  try {
+    const res = await fetch('/api/purchase-returns', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const j = await res.json();
+    if (res.ok) { showSuccessModal('退货成功，库存已红冲'); document.getElementById(modalId) && document.getElementById(modalId).remove(); await fetchData(); renderPurchaseReturnsList(); }
+    else showAlertModal('退货失败', j.message || j.error || '未知错误');
+  } catch (e) { showAlertModal('退货失败', e.message); }
 }
 
 async function renderInventory() {
@@ -16363,238 +16646,503 @@ function saveAdminSettings() {
   document.body.appendChild(modal);
 }
 
+// ===== 报表与统计中心：报表聚合辅助 =====
+function reportTabBtn(label, key, active) {
+  return `<button onclick="switchReportsTab('${key}')" class="px-3 py-1.5 rounded text-xs ${key === active ? 'bg-teal-500 text-white' : 'border border-slate-300 hover:bg-slate-50'}">${label}</button>`;
+}
+function reportShell(title, subtitle, tabs, bodyHTML) {
+  document.getElementById('page-title').textContent = title;
+  document.getElementById('page-subtitle').textContent = subtitle;
+  const container = document.getElementById('page-content');
+  if (!container) return;
+  container.innerHTML = `
+    <div class="fade-in text-xs">
+      <div class="bg-white border border-slate-200 rounded-lg overflow-hidden mb-4">
+        <div class="flex flex-wrap items-center gap-3 p-3 border-b border-slate-200">${tabs.join('')}</div>
+      </div>
+      ${bodyHTML}
+    </div>`;
+}
+// 交货/日期截取
+function rDate(s) { return String(s || '').slice(0, 10); }
+function rMonth(s) { return String(s || '').slice(0, 7); }
+// 通用横向排名条
+function rankBarHTML(list, valueKey, fmt, unit) {
+  if (!list || !list.length) return '<p class="text-sm text-slate-400 text-center py-8">暂无数据</p>';
+  const max = Math.max(1, ...list.map(x => Number(x[valueKey]) || 0));
+  const colors = ['#06b6d4', '#6366f1', '#10b981', '#f59e0b', '#8b5cf6', '#ef4444', '#14b8a6', '#f97316', '#3b82f6', '#ec4899'];
+  return list.slice(0, 10).map((x, i) => {
+    const val = Number(x[valueKey]) || 0;
+    const w = Math.max(2, Math.round(val / max * 100));
+    return `<div class="flex items-center gap-2 mb-2">
+      <span class="w-36 text-xs text-slate-600 truncate flex-shrink-0" title="${esc(x.name)}">${i + 1}. ${esc(x.name)}</span>
+      <div class="flex-1 h-4 bg-slate-100 rounded-full overflow-hidden"><div class="h-full rounded-full" style="width:${w}%;background:${colors[i % colors.length]}"></div></div>
+      <span class="w-16 text-right text-xs text-slate-600 flex-shrink-0">${fmt(val)}${unit || ''}</span>
+    </div>`;
+  }).join('');
+}
+// 报表模块级横向条图：销售趋势（与看板同款，模块级作用于报表页）
+function trendBarsHTML(trend) {
+  if (!trend || !trend.length) return '<p class="text-sm text-slate-400 text-center py-6">暂无销售数据</p>';
+  const max = Math.max(1, ...trend.map(t => t.amount));
+  return trend.map(t => {
+    const w = Math.max(2, Math.round((t.amount / max) * 100));
+    const label = String(t.date || '').slice(5);
+    return `
+      <div class="flex items-center gap-2" title="${t.date} 销售额 ${formatCurrency(t.amount)}">
+        <span class="w-10 text-[10px] text-slate-500 text-right flex-shrink-0">${label}</span>
+        <div class="flex-1 h-3.5 bg-slate-100 rounded-sm overflow-hidden">
+          <div class="h-full rounded-sm ${t.amount > 0 ? 'bg-gradient-to-r from-teal-400 to-teal-600' : ''}" style="width:${w}%"></div>
+        </div>
+        <span class="w-14 text-right text-[10px] text-slate-600 flex-shrink-0">${formatCompact(t.amount)}</span>
+      </div>`;
+  }).join('');
+}
+// 报表模块级环形图 + 图例：订单状态分布
+function statusDonutHTML(dist) {
+  const colors = { pending: '#f59e0b', approved: '#3b82f6', in_progress: '#8b5cf6', shipped: '#06b6d4', completed: '#10b981', cancelled: '#ef4444', returned: '#f97316', unknown: '#94a3b8' };
+  const total = dist.reduce((s, d) => s + d.count, 0);
+  if (!total) return '<p class="text-sm text-slate-400 text-center py-6">暂无订单</p>';
+  let acc = 0;
+  const arcs = dist.map(d => {
+    const pct = d.count / total;
+    const stroke = colors[d.status] || '#94a3b8';
+    const dash = pct * 100;
+    const rotate = acc * 100 * 3.6;
+    acc += pct;
+    return `<circle cx="50" cy="50" r="34" fill="none" stroke="${stroke}" stroke-width="14" stroke-dasharray="${dash} ${100 - dash}" stroke-dashoffset="${25 - dash / 2}" transform="rotate(${rotate} 50 50)" stroke-linecap="butt"></circle>`;
+  }).join('');
+  const statusName = { pending: '待审核', approved: '已审核', in_progress: '生产中', shipped: '已发货', completed: '已完成', cancelled: '已取消', returned: '已退货', unknown: '其他' };
+  const legends = dist.map(d => `
+    <div class="flex items-center justify-between text-xs">
+      <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-sm" style="background:${colors[d.status] || '#94a3b8'}"></span>${statusName[d.status] || d.status}</span>
+      <span class="text-slate-500">${d.count} <span class="text-slate-400">(${Math.round(d.count / total * 100)}%)</span></span>
+    </div>`).join('');
+  return `<div class="flex flex-col sm:flex-row items-center justify-center gap-6">
+    <div class="w-28 h-28 relative flex-shrink-0">
+      <svg viewBox="0 0 100 100" class="w-full h-full">${arcs}</svg>
+      <div class="absolute inset-0 flex flex-col items-center justify-center"><span class="text-lg font-bold text-slate-800">${total}</span><span class="text-[10px] text-slate-400">订单</span></div>
+    </div>
+    <div class="flex-1 min-w-0 space-y-1.5 w-full">${legends}</div>
+  </div>`;
+}
+// 精简金额显示（报表用）
+function formatCompact(n) {
+  n = Number(n) || 0;
+  if (n >= 10000) return (n / 10000).toFixed(1) + 'w';
+  if (n >= 1000) return (n / 1000).toFixed(1) + 'k';
+  return String(Math.round(n));
+}
+// 产品维度聚合：orderFlag = all | shipped
+function rProductRank(orderFlag) {
+  const m = new Map();
+  (data.salesOrders || []).forEach(o => {
+    if (orderFlag === 'shipped' && !['shipped', 'completed'].includes(o.status)) return;
+    (o.items || []).forEach(it => {
+      const pid = it.productId || it.product_id || 'x';
+      const nm = it.productName || it.name || it.type || esc(String(pid));
+      const qty = Number(it.quantity || it.qty) || 0;
+      const key = String(pid || nm);
+      const e = m.get(key) || { name: nm, qty: 0, amount: 0 };
+      e.qty += qty; e.amount += Number(it.amount) || 0; m.set(key, e);
+    });
+  });
+  return [...m.values()].sort((a, b) => b.qty - a.qty);
+}
+// 客户维度聚合：orderFlag = all | shipped
+function rCustomerRank(orderFlag) {
+  const m = new Map();
+  (data.salesOrders || []).forEach(o => {
+    if (orderFlag === 'shipped' && !['shipped', 'completed'].includes(o.status)) return;
+    const cid = o.customerId || '';
+    const nm = getCustomerName(cid) || '未分配客户';
+    const amt = Number(o.totalAmount) || 0;
+    const e = m.get(cid) || { name: nm, amount: 0, count: 0 };
+    e.amount += amt; e.count += 1; m.set(cid, e);
+  });
+  return [...m.values()].sort((a, b) => b.amount - a.amount);
+}
+// 经营报表（按日趋势）
+function renderReportBusiness() {
+  const m = new Map();
+  (data.salesOrders || []).forEach(o => { const d = rDate(o.orderDate || o.createdAt); m.set(d, (m.get(d) || 0) + (Number(o.totalAmount) || 0)); });
+  const trend = [...m.entries()].sort((a, b) => a[0] < b[0] ? -1 : 1).slice(-14).map(([date, amount]) => ({ date, amount }));
+  const today = new Date().toISOString().slice(0, 10);
+  const monthKey = today.slice(0, 7);
+  const todayCount = (data.salesOrders || []).filter(o => rDate(o.orderDate || o.createdAt) === today).length;
+  const monthAmount = (data.salesOrders || []).filter(o => rMonth(o.orderDate || o.createdAt) === monthKey).reduce((s, o) => s + (Number(o.totalAmount) || 0), 0);
+  const totalAmount = (data.salesOrders || []).reduce((s, o) => s + (Number(o.totalAmount) || 0), 0);
+  return `
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+      <div class="bg-white border border-slate-200 rounded-lg p-4"><p class="text-slate-500 text-xs mb-1">今日订单</p><p class="text-2xl font-bold text-teal-600">${todayCount}</p></div>
+      <div class="bg-white border border-slate-200 rounded-lg p-4"><p class="text-slate-500 text-xs mb-1">本月销售额</p><p class="text-2xl font-bold text-green-600">${formatCurrency(monthAmount)}</p></div>
+      <div class="bg-white border border-slate-200 rounded-lg p-4"><p class="text-slate-500 text-xs mb-1">累计销售额</p><p class="text-2xl font-bold text-blue-600">${formatCurrency(totalAmount)}</p></div>
+      <div class="bg-white border border-slate-200 rounded-lg p-4"><p class="text-slate-500 text-xs mb-1">客户总数</p><p class="text-2xl font-bold text-indigo-600">${(data.customers || []).length}</p></div>
+    </div>
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+      <div class="bg-white border border-slate-200 rounded-lg p-4">
+        <p class="text-sm font-semibold text-slate-700 mb-3">近 14 日销售额趋势</p>
+        ${trendBarsHTML(trend)}
+      </div>
+      <div class="bg-white border border-slate-200 rounded-lg p-4">
+        <p class="text-sm font-semibold text-slate-700 mb-3">产能与库存（当前）</p>
+        <div class="space-y-2 text-xs">
+          ${rankBarHTML((data.inventory || []).map(inv => { const p = (data.products || []).find(pp => String(pp.id) === String(inv.productId)); return { name: (p && (p.name || p.type)) || ('产品' + inv.productId), qty: Number(inv.quantity) || 0 }; }).sort((a, b) => b.qty - a.qty), 'qty', v => String(v), ' 件')}
+        </div>
+      </div>
+    </div>
+    <div class="bg-white border border-slate-200 rounded-lg overflow-hidden">
+      <p class="text-sm font-semibold text-slate-700 px-4 pt-3 pb-1">最近订单</p>
+      <table class="w-full mt-2">
+        <thead class="bg-slate-50"><tr><th class="px-3 py-2 text-left text-xs font-medium text-slate-600">订单编号</th><th class="px-3 py-2 text-left text-xs font-medium text-slate-600">客户</th><th class="px-3 py-2 text-right text-xs font-medium text-slate-600">金额</th><th class="px-3 py-2 text-left text-xs font-medium text-slate-600">状态</th><th class="px-3 py-2 text-left text-xs font-medium text-slate-600">日期</th></tr></thead>
+        <tbody class="divide-y divide-slate-100">
+          ${(data.salesOrders || []).slice().sort((a, b) => (rDate(b.orderDate || b.createdAt)).localeCompare(rDate(a.orderDate || a.createdAt))).slice(0, 10).map(o => `
+            <tr class="hover:bg-slate-50">
+              <td class="px-3 py-2 text-xs text-slate-800">${esc(o.orderNo || o.orderNumber || o.id || '-')}</td>
+              <td class="px-3 py-2 text-xs text-slate-600">${esc(getCustomerName(o.customerId))}</td>
+              <td class="px-3 py-2 text-xs text-slate-600 text-right">${formatCurrency(o.totalAmount)}</td>
+              <td class="px-3 py-2 text-xs"><span class="px-2 py-0.5 rounded-full text-xs ${getStatusClass(o.status)}">${getStatusText(o.status)}</span></td>
+              <td class="px-3 py-2 text-xs text-slate-600">${rDate(o.orderDate || o.createdAt)}</td>
+            </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>`;
+}
+// 订单状态分布
+function renderReportOrderStatus() {
+  const m = new Map();
+  (data.salesOrders || []).forEach(o => m.set(o.status || 'unknown', (m.get(o.status || 'unknown') || 0) + 1));
+  const dist = [...m.entries()].map(([status, count]) => ({ status, count }));
+  return `
+    <div class="bg-white border border-slate-200 rounded-lg p-4 mb-4">${statusDonutHTML(dist)}</div>
+    <div class="bg-white border border-slate-200 rounded-lg overflow-hidden">
+      <table class="w-full">
+        <thead class="bg-slate-50"><tr><th class="px-3 py-2 text-left text-xs font-medium text-slate-600">订单编号</th><th class="px-3 py-2 text-left text-xs font-medium text-slate-600">客户</th><th class="px-3 py-2 text-right text-xs font-medium text-slate-600">金额</th><th class="px-3 py-2 text-left text-xs font-medium text-slate-600">状态</th><th class="px-3 py-2 text-left text-xs font-medium text-slate-600">日期</th></tr></thead>
+        <tbody class="divide-y divide-slate-100">
+          ${(data.salesOrders || []).map(o => `<tr class="hover:bg-slate-50"><td class="px-3 py-2 text-xs text-slate-800">${esc(o.orderNo || o.orderNumber || o.id || '-')}</td><td class="px-3 py-2 text-xs text-slate-600">${esc(getCustomerName(o.customerId))}</td><td class="px-3 py-2 text-xs text-slate-600 text-right">${formatCurrency(o.totalAmount)}</td><td class="px-3 py-2 text-xs"><span class="px-2 py-0.5 rounded-full text-xs ${getStatusClass(o.status)}">${getStatusText(o.status)}</span></td><td class="px-3 py-2 text-xs text-slate-600">${rDate(o.orderDate || o.createdAt)}</td></tr>`).join('') || '<tr><td colspan="5" class="px-3 py-8 text-center text-slate-500">暂无订单数据</td></tr>'}
+        </tbody>
+      </table>
+    </div>`;
+}
+// 客户下单日报
+function renderReportDailyOrder() {
+  const m = new Map();
+  (data.salesOrders || []).forEach(o => {
+    const d = rDate(o.orderDate || o.createdAt);
+    const e = m.get(d) || { count: 0, amount: 0 };
+    e.count += 1; e.amount += Number(o.totalAmount) || 0; m.set(d, e);
+  });
+  const rows = [...m.entries()].sort((a, b) => b[0].localeCompare(a[0]));
+  return `
+    <div class="bg-white border border-slate-200 rounded-lg overflow-hidden">
+      <table class="w-full">
+        <thead class="bg-slate-50"><tr><th class="px-3 py-2 text-left text-xs font-medium text-slate-600">下单日期</th><th class="px-3 py-2 text-right text-xs font-medium text-slate-600">订单数</th><th class="px-3 py-2 text-right text-xs font-medium text-slate-600">金额</th></tr></thead>
+        <tbody class="divide-y divide-slate-100">
+          ${rows.map(([d, e]) => `<tr class="hover:bg-slate-50"><td class="px-3 py-2 text-xs text-slate-700">${d}</td><td class="px-3 py-2 text-xs text-slate-600 text-right">${e.count}</td><td class="px-3 py-2 text-xs text-slate-600 text-right">${formatCurrency(e.amount)}</td></tr>`).join('') || '<tr><td colspan="3" class="px-3 py-8 text-center text-slate-500">暂无订单数据</td></tr>'}
+        </tbody>
+      </table>
+    </div>`;
+}
+function renderReportsSales(active) {
+  const tabs = [reportTabBtn('经营报表', 'business', active), reportTabBtn('订单状态查询', 'orderStatus', active), reportTabBtn('客户下单日报', 'dailyOrder', active)];
+  const body = active === 'orderStatus' ? renderReportOrderStatus() : (active === 'dailyOrder' ? renderReportDailyOrder() : renderReportBusiness());
+  reportShell('销量管理报', '经营报表、订单状态、客户下单日报', tabs, body);
+}
+// 生产报表：工序产量统计 / 生产月报
+function renderReportProcessStats() {
+  const m = new Map();
+  (data.processes || []).forEach(p => {
+    const nm = p.name || '未命名工序';
+    const e = m.get(nm) || { name: nm, total: 0, completed: 0, in_progress: 0, pending: 0 };
+    e.total += 1;
+    if (['completed', 'done', 'finished'].includes(p.status)) e.completed += 1;
+    else if (p.status === 'in_progress') e.in_progress += 1;
+    else e.pending += 1;
+    m.set(nm, e);
+  });
+  const rows = [...m.values()];
+  return `
+    <div class="bg-white border border-slate-200 rounded-lg overflow-hidden">
+      <table class="w-full">
+        <thead class="bg-slate-50"><tr><th class="px-3 py-2 text-left text-xs font-medium text-slate-600">工序</th><th class="px-3 py-2 text-right text-xs font-medium text-slate-600">总任务</th><th class="px-3 py-2 text-right text-xs font-medium text-slate-600">已完成</th><th class="px-3 py-2 text-right text-xs font-medium text-slate-600">进行中</th><th class="px-3 py-2 text-right text-xs font-medium text-slate-600">待处理</th></tr></thead>
+        <tbody class="divide-y divide-slate-100">
+          ${rows.map(r => `<tr class="hover:bg-slate-50"><td class="px-3 py-2 text-xs text-slate-700">${esc(r.name)}</td><td class="px-3 py-2 text-xs text-slate-600 text-right">${r.total}</td><td class="px-3 py-2 text-xs text-green-600 text-right">${r.completed}</td><td class="px-3 py-2 text-xs text-blue-600 text-right">${r.in_progress}</td><td class="px-3 py-2 text-xs text-amber-600 text-right">${r.pending}</td></tr>`).join('') || '<tr><td colspan="5" class="px-3 py-8 text-center text-slate-500">暂无工序数据</td></tr>'}
+        </tbody>
+      </table>
+    </div>`;
+}
+function renderReportProductionMonthly() {
+  const m = new Map();
+  (data.planOrders || []).forEach(o => {
+    const mo = rMonth(o.startDate || o.createdAt);
+    const e = m.get(mo) || { month: mo, count: 0, qty: 0 };
+    e.count += 1;
+    e.qty += (o.items || []).reduce((s, it) => s + (Number(it.quantity || it.qty) || 0), 0) || (Number(o.quantity) || 0);
+    m.set(mo, e);
+  });
+  const rows = [...m.values()].sort((a, b) => b.month.localeCompare(a.month));
+  return `
+    <div class="bg-white border border-slate-200 rounded-lg overflow-hidden">
+      <table class="w-full">
+        <thead class="bg-slate-50"><tr><th class="px-3 py-2 text-left text-xs font-medium text-slate-600">月份</th><th class="px-3 py-2 text-right text-xs font-medium text-slate-600">排产单数</th><th class="px-3 py-2 text-right text-xs font-medium text-slate-600">计划数量</th></tr></thead>
+        <tbody class="divide-y divide-slate-100">
+          ${rows.map(r => `<tr class="hover:bg-slate-50"><td class="px-3 py-2 text-xs text-slate-700">${r.month}</td><td class="px-3 py-2 text-xs text-slate-600 text-right">${r.count}</td><td class="px-3 py-2 text-xs text-slate-600 text-right">${r.qty} 件</td></tr>`).join('') || '<tr><td colspan="3" class="px-3 py-8 text-center text-slate-500">暂无生产数据</td></tr>'}
+        </tbody>
+      </table>
+    </div>`;
+}
+function renderReportsProduction(active) {
+  const tabs = [reportTabBtn('工序产量统计', 'processStats', active), reportTabBtn('生产月报', 'productionMonthly', active)];
+  const body = active === 'productionMonthly' ? renderReportProductionMonthly() : renderReportProcessStats();
+  reportShell('生产管理报表', '工序产量统计、生产月报表', tabs, body);
+}
+// 库存报表：产品入库/出库明细、成品月度、材料进销存
+function renderReportProductIn() {
+  const m = new Map();
+  (data.stockInRecords || []).forEach(r => {
+    const pid = r.productId || '';
+    const nm = r.productName || (() => { const p = (data.products || []).find(pp => String(pp.id) === String(pid)); return p ? (p.name || p.type) : ('产品' + pid); })();
+    const e = m.get(String(pid)) || { name: nm, qty: 0, times: 0, wh: r.warehouse || '' };
+    e.qty += Number(r.quantity) || 0; e.times += 1; m.set(String(pid), e);
+  });
+  const rows = [...m.values()].sort((a, b) => b.qty - a.qty);
+  return `
+    <div class="bg-white border border-slate-200 rounded-lg overflow-hidden">
+      <table class="w-full">
+        <thead class="bg-slate-50"><tr><th class="px-3 py-2 text-left text-xs font-medium text-slate-600">产品</th><th class="px-3 py-2 text-left text-xs font-medium text-slate-600">仓库</th><th class="px-3 py-2 text-right text-xs font-medium text-slate-600">入库次数</th><th class="px-3 py-2 text-right text-xs font-medium text-slate-600">入库数量</th></tr></thead>
+        <tbody class="divide-y divide-slate-100">
+          ${rows.map(r => `<tr class="hover:bg-slate-50"><td class="px-3 py-2 text-xs text-slate-700">${esc(r.name)}</td><td class="px-3 py-2 text-xs text-slate-600">${esc(r.wh || '-')}</td><td class="px-3 py-2 text-xs text-slate-600 text-right">${r.times}</td><td class="px-3 py-2 text-xs text-slate-600 text-right">${r.qty} 件</td></tr>`).join('') || '<tr><td colspan="4" class="px-3 py-8 text-center text-slate-500">暂无入库记录</td></tr>'}
+        </tbody>
+      </table>
+    </div>`;
+}
+function renderReportProductOut() {
+  const rows = rProductRank('shipped');
+  return `
+    <div class="bg-white border border-slate-200 rounded-lg overflow-hidden">
+      <table class="w-full">
+        <thead class="bg-slate-50"><tr><th class="px-3 py-2 text-left text-xs font-medium text-slate-600">产品</th><th class="px-3 py-2 text-right text-xs font-medium text-slate-600">已发货数量</th><th class="px-3 py-2 text-right text-xs font-medium text-slate-600">发货金额</th></tr></thead>
+        <tbody class="divide-y divide-slate-100">
+          ${rows.map(r => `<tr class="hover:bg-slate-50"><td class="px-3 py-2 text-xs text-slate-700">${esc(r.name)}</td><td class="px-3 py-2 text-xs text-slate-600 text-right">${r.qty} 件</td><td class="px-3 py-2 text-xs text-slate-600 text-right">${formatCurrency(r.amount)}</td></tr>`).join('') || '<tr><td colspan="3" class="px-3 py-8 text-center text-slate-500">暂无发货数据</td></tr>'}
+        </tbody>
+      </table>
+    </div>`;
+}
+function renderReportProductMonthly() {
+  const m = new Map();
+  (data.salesOrders || []).forEach(o => {
+    const mo = rMonth(o.orderDate || o.createdAt);
+    const e = m.get(mo) || { month: mo, count: 0, amount: 0, qty: 0 };
+    e.count += 1; e.amount += Number(o.totalAmount) || 0;
+    e.qty += (o.items || []).reduce((s, it) => s + (Number(it.quantity || it.qty) || 0), 0);
+    m.set(mo, e);
+  });
+  const rows = [...m.values()].sort((a, b) => b.month.localeCompare(a.month));
+  return `
+    <div class="bg-white border border-slate-200 rounded-lg overflow-hidden">
+      <table class="w-full">
+        <thead class="bg-slate-50"><tr><th class="px-3 py-2 text-left text-xs font-medium text-slate-600">月份</th><th class="px-3 py-2 text-right text-xs font-medium text-slate-600">订单数</th><th class="px-3 py-2 text-right text-xs font-medium text-slate-600">成品数量</th><th class="px-3 py-2 text-right text-xs font-medium text-slate-600">销售额</th></tr></thead>
+        <tbody class="divide-y divide-slate-100">
+          ${rows.map(r => `<tr class="hover:bg-slate-50"><td class="px-3 py-2 text-xs text-slate-700">${r.month}</td><td class="px-3 py-2 text-xs text-slate-600 text-right">${r.count}</td><td class="px-3 py-2 text-xs text-slate-600 text-right">${r.qty} 件</td><td class="px-3 py-2 text-xs text-slate-600 text-right">${formatCurrency(r.amount)}</td></tr>`).join('') || '<tr><td colspan="4" class="px-3 py-8 text-center text-slate-500">暂无成品种数据</td></tr>'}
+        </tbody>
+      </table>
+    </div>`;
+}
+function renderReportMaterialMonthly() {
+  const m = new Map();
+  (data.stockInRecords || []).forEach(r => {
+    const mo = rMonth(r.createdAt);
+    const e = m.get(mo) || { month: mo, inQty: 0 };
+    e.inQty += Number(r.quantity) || 0; m.set(mo, e);
+  });
+  (data.salesOrders || []).forEach(o => {
+    if (!['shipped', 'completed'].includes(o.status)) return;
+    const mo = rMonth(o.orderDate || o.createdAt);
+    const e = m.get(mo) || { month: mo, inQty: 0, outQty: 0 };
+    e.outQty = (e.outQty || 0) + (o.items || []).reduce((s, it) => s + (Number(it.quantity || it.qty) || 0), 0);
+    m.set(mo, e);
+  });
+  const rows = [...m.values()].sort((a, b) => b.month.localeCompare(a.month));
+  return `
+    <div class="bg-white border border-slate-200 rounded-lg overflow-hidden">
+      <table class="w-full">
+        <thead class="bg-slate-50"><tr><th class="px-3 py-2 text-left text-xs font-medium text-slate-600">月份</th><th class="px-3 py-2 text-right text-xs font-medium text-slate-600">本期入库</th><th class="px-3 py-2 text-right text-xs font-medium text-slate-600">本期出库</th></tr></thead>
+        <tbody class="divide-y divide-slate-100">
+          ${rows.map(r => `<tr class="hover:bg-slate-50"><td class="px-3 py-2 text-xs text-slate-700">${r.month}</td><td class="px-3 py-2 text-xs text-slate-600 text-right">${r.inQty} 件</td><td class="px-3 py-2 text-xs text-slate-600 text-right">${r.outQty || 0} 件</td></tr>`).join('') || '<tr><td colspan="3" class="px-3 py-8 text-center text-slate-500">暂无库存进出记录</td></tr>'}
+        </tbody>
+      </table>
+    </div>`;
+}
+function renderReportsInventory(active) {
+  const tabs = [reportTabBtn('产品入库明细', 'productInDetail', active), reportTabBtn('产品出库明细', 'productOutDetail', active), reportTabBtn('成品月度统计', 'productMonthly', active), reportTabBtn('月度材料进销存', 'materialMonthly', active)];
+  const body = active === 'productOutDetail' ? renderReportProductOut() : (active === 'productMonthly' ? renderReportProductMonthly() : (active === 'materialMonthly' ? renderReportMaterialMonthly() : renderReportProductIn()));
+  reportShell('库存管理报表', '产品出入库明细、库存统计', tabs, body);
+}
+// 采购报表：供应商供货 / 未付款 / 采购金额
+function rSupplierChart() {
+  const m = new Map();
+  (data.purchaseOrders || []).forEach(o => {
+    const nm = o.supplierName || o.supplier || '未知供应商';
+    const e = m.get(nm) || { name: nm, amount: 0, count: 0 };
+    e.amount += Number(o.totalAmount || o.total_amount) || 0; e.count += 1; m.set(nm, e);
+  });
+  return [...m.values()].sort((a, b) => b.amount - a.amount);
+}
+function renderReportSupplierChart() {
+  const rows = rSupplierChart();
+  return `<div class="bg-white border border-slate-200 rounded-lg p-4"><p class="text-sm font-semibold text-slate-700 mb-3">供应商供货金额（近采购单）</p>${rankBarHTML(rows, 'amount', v => formatCurrency(v))}</div>`;
+}
+function renderReportSupplierUnpaid() {
+  const rows = (data.purchaseOrders || []).filter(o => !['completed', 'settled', 'paid'].includes(o.status));
+  const total = rows.reduce((s, o) => s + (Number(o.totalAmount || o.total_amount) || 0), 0);
+  return `
+    <div class="bg-white border border-slate-200 rounded-lg p-4 mb-4">
+      <p class="text-sm font-semibold text-slate-700 mb-2">未付款采购单</p>
+      <p class="text-2xl font-bold text-red-600">${formatCurrency(total)}</p>
+    </div>
+    <div class="bg-white border border-slate-200 rounded-lg overflow-hidden">
+      <table class="w-full">
+        <thead class="bg-slate-50"><tr><th class="px-3 py-2 text-left text-xs font-medium text-slate-600">供应商</th><th class="px-3 py-2 text-right text-xs font-medium text-slate-600">金额</th><th class="px-3 py-2 text-left text-xs font-medium text-slate-600">状态</th></tr></thead>
+        <tbody class="divide-y divide-slate-100">
+          ${rows.map(o => `<tr class="hover:bg-slate-50"><td class="px-3 py-2 text-xs text-slate-700">${esc(o.supplierName || o.supplier || '-')}</td><td class="px-3 py-2 text-xs text-slate-600 text-right">${formatCurrency(o.totalAmount || o.total_amount)}</td><td class="px-3 py-2 text-xs text-slate-600">${esc(o.status)}</td></tr>`).join('') || '<tr><td colspan="3" class="px-3 py-8 text-center text-slate-500">暂无未付款采购单</td></tr>'}
+        </tbody>
+      </table>
+    </div>`;
+}
+function renderReportSupplierAmount() {
+  const rows = rSupplierChart();
+  return `
+    <div class="bg-white border border-slate-200 rounded-lg overflow-hidden">
+      <table class="w-full">
+        <thead class="bg-slate-50"><tr><th class="px-3 py-2 text-left text-xs font-medium text-slate-600">供应商</th><th class="px-3 py-2 text-right text-xs font-medium text-slate-600">采购单数</th><th class="px-3 py-2 text-right text-xs font-medium text-slate-600">采购金额</th></tr></thead>
+        <tbody class="divide-y divide-slate-100">
+          ${rows.map(r => `<tr class="hover:bg-slate-50"><td class="px-3 py-2 text-xs text-slate-700">${esc(r.name)}</td><td class="px-3 py-2 text-xs text-slate-600 text-right">${r.count}</td><td class="px-3 py-2 text-xs text-slate-600 text-right">${formatCurrency(r.amount)}</td></tr>`).join('') || '<tr><td colspan="3" class="px-3 py-8 text-center text-slate-500">暂无采购数据</td></tr>'}
+        </tbody>
+      </table>
+    </div>`;
+}
+function renderReportsPurchase(active) {
+  const tabs = [reportTabBtn('供应商供货柱状图', 'supplierChart', active), reportTabBtn('供应商未付款', 'supplierUnpaid', active), reportTabBtn('供应商采购金额', 'supplierAmount', active)];
+  const body = active === 'supplierUnpaid' ? renderReportSupplierUnpaid() : (active === 'supplierAmount' ? renderReportSupplierAmount() : renderReportSupplierChart());
+  reportShell('采购管理报表', '供应商供货、付款统计', tabs, body);
+}
+// 财务报表：收支 / 资金月报日报 / 客户收款
+function rFinIncomeExpense() {
+  const income = (data.financeRecords || []).filter(r => r.type === 'income').reduce((s, r) => s + (Number(r.amount) || 0), 0);
+  const expense = (data.financeRecords || []).filter(r => r.type === 'expense').reduce((s, r) => s + Math.abs(Number(r.amount) || 0), 0);
+  const catM = new Map();
+  (data.financeRecords || []).forEach(r => { const c = r.category || '其他'; const e = catM.get(c) || { name: c, amount: 0 }; e.amount += (Number(r.amount) || 0); catM.set(c, e); });
+  const cats = [...catM.values()].sort((a, b) => b.amount - a.amount);
+  return { income, expense, net: income - expense, cats };
+}
+function renderReportIncomeExpense() {
+  const f = rFinIncomeExpense();
+  const incomeCats = f.cats.filter(c => c.amount >= 0);
+  const expenseCats = f.cats.filter(c => c.amount < 0).map(c => ({ name: c.name, amount: Math.abs(c.amount) }));
+  return `
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+      <div class="bg-white border border-slate-200 rounded-lg p-4"><p class="text-slate-500 text-xs mb-1">累计收入</p><p class="text-2xl font-bold text-green-600">${formatCurrency(f.income)}</p></div>
+      <div class="bg-white border border-slate-200 rounded-lg p-4"><p class="text-slate-500 text-xs mb-1">累计支出</p><p class="text-2xl font-bold text-red-600">${formatCurrency(f.expense)}</p></div>
+      <div class="bg-white border border-slate-200 rounded-lg p-4"><p class="text-slate-500 text-xs mb-1">净结余</p><p class="text-2xl font-bold text-blue-600">${formatCurrency(f.net)}</p></div>
+      <div class="bg-white border border-slate-200 rounded-lg p-4"><p class="text-slate-500 text-xs mb-1">记录数</p><p class="text-2xl font-bold text-indigo-600">${(data.financeRecords || []).length}</p></div>
+    </div>
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div class="bg-white border border-slate-200 rounded-lg p-4"><p class="text-sm font-semibold text-slate-700 mb-3">收入按类目</p>${rankBarHTML(incomeCats, 'amount', v => formatCurrency(v)) || '<p class="text-sm text-slate-400 text-center py-6">暂无收入记录</p>'}</div>
+      <div class="bg-white border border-slate-200 rounded-lg p-4"><p class="text-sm font-semibold text-slate-700 mb-3">支出按类目</p>${rankBarHTML(expenseCats, 'amount', v => formatCurrency(v)) || '<p class="text-sm text-slate-400 text-center py-6">暂无支出记录</p>'}</div>
+    </div>`;
+}
+function renderReportFundMonthly() {
+  const m = new Map();
+  (data.financeRecords || []).forEach(r => {
+    const mo = rMonth(r.date || r.createdAt);
+    const e = m.get(mo) || { month: mo, income: 0, expense: 0 };
+    const amt = Number(r.amount) || 0;
+    if (r.type === 'expense') e.expense += Math.abs(amt); else e.income += amt;
+    m.set(mo, e);
+  });
+  const rows = [...m.values()].sort((a, b) => b.month.localeCompare(a.month));
+  return `
+    <div class="bg-white border border-slate-200 rounded-lg p-4 mb-4">${rankBarHTML(rows.map(r => ({ name: r.month, amount: r.income - r.expense })), 'amount', v => formatCurrency(v))}</div>
+    <div class="bg-white border border-slate-200 rounded-lg overflow-hidden">
+      <table class="w-full">
+        <thead class="bg-slate-50"><tr><th class="px-3 py-2 text-left text-xs font-medium text-slate-600">月份</th><th class="px-3 py-2 text-right text-xs font-medium text-slate-600">收入</th><th class="px-3 py-2 text-right text-xs font-medium text-slate-600">支出</th><th class="px-3 py-2 text-right text-xs font-medium text-slate-600">结余</th></tr></thead>
+        <tbody class="divide-y divide-slate-100">
+          ${rows.map(r => `<tr class="hover:bg-slate-50"><td class="px-3 py-2 text-xs text-slate-700">${r.month}</td><td class="px-3 py-2 text-xs text-green-600 text-right">${formatCurrency(r.income)}</td><td class="px-3 py-2 text-xs text-red-600 text-right">${formatCurrency(r.expense)}</td><td class="px-3 py-2 text-xs text-blue-600 text-right">${formatCurrency(r.income - r.expense)}</td></tr>`).join('') || '<tr><td colspan="4" class="px-3 py-8 text-center text-slate-500">暂无资金数据</td></tr>'}
+        </tbody>
+      </table>
+    </div>`;
+}
+function renderReportFundDaily() {
+  const m = new Map();
+  (data.financeRecords || []).forEach(r => {
+    const d = rDate(r.date || r.createdAt);
+    const e = m.get(d) || { date: d, income: 0, expense: 0 };
+    const amt = Number(r.amount) || 0;
+    if (r.type === 'expense') e.expense += Math.abs(amt); else e.income += amt;
+    m.set(d, e);
+  });
+  const rows = [...m.values()].sort((a, b) => a.date.localeCompare(b.date)).slice(-14);
+  return `
+    <div class="bg-white border border-slate-200 rounded-lg overflow-hidden">
+      <table class="w-full">
+        <thead class="bg-slate-50"><tr><th class="px-3 py-2 text-left text-xs font-medium text-slate-600">日期</th><th class="px-3 py-2 text-right text-xs font-medium text-slate-600">收入</th><th class="px-3 py-2 text-right text-xs font-medium text-slate-600">支出</th><th class="px-3 py-2 text-right text-xs font-medium text-slate-600">结余</th></tr></thead>
+        <tbody class="divide-y divide-slate-100">
+          ${rows.map(r => `<tr class="hover:bg-slate-50"><td class="px-3 py-2 text-xs text-slate-700">${r.date}</td><td class="px-3 py-2 text-xs text-green-600 text-right">${formatCurrency(r.income)}</td><td class="px-3 py-2 text-xs text-red-600 text-right">${formatCurrency(r.expense)}</td><td class="px-3 py-2 text-xs text-blue-600 text-right">${formatCurrency(r.income - r.expense)}</td></tr>`).join('') || '<tr><td colspan="4" class="px-3 py-8 text-center text-slate-500">暂无流水数据</td></tr>'}
+        </tbody>
+      </table>
+    </div>`;
+}
+function renderReportCustomerReceive() {
+  const m = new Map();
+  (data.salesOrders || []).forEach(o => {
+    const amt = Number(o.paidAmount) || 0;
+    if (amt <= 0) return;
+    const cid = o.customerId || '';
+    const e = m.get(cid) || { name: getCustomerName(cid) || '未分配客户', amount: 0, count: 0 };
+    e.amount += amt; e.count += 1; m.set(cid, e);
+  });
+  const rows = [...m.values()].sort((a, b) => b.amount - a.amount);
+  return `
+    <div class="bg-white border border-slate-200 rounded-lg p-4 mb-4">${rankBarHTML(rows, 'amount', v => formatCurrency(v))}</div>
+    <div class="bg-white border border-slate-200 rounded-lg overflow-hidden">
+      <table class="w-full">
+        <thead class="bg-slate-50"><tr><th class="px-3 py-2 text-left text-xs font-medium text-slate-600">客户</th><th class="px-3 py-2 text-right text-xs font-medium text-slate-600">已收款单数</th><th class="px-3 py-2 text-right text-xs font-medium text-slate-600">已收金额</th></tr></thead>
+        <tbody class="divide-y divide-slate-100">
+          ${rows.map(r => `<tr class="hover:bg-slate-50"><td class="px-3 py-2 text-xs text-slate-700">${esc(r.name)}</td><td class="px-3 py-2 text-xs text-slate-600 text-right">${r.count}</td><td class="px-3 py-2 text-xs text-green-600 text-right">${formatCurrency(r.amount)}</td></tr>`).join('') || '<tr><td colspan="3" class="px-3 py-8 text-center text-slate-500">暂无收款记录</td></tr>'}
+        </tbody>
+      </table>
+    </div>`;
+}
+function renderReportsFinance(active) {
+  const tabs = [reportTabBtn('收支报表', 'incomeExpense', active), reportTabBtn('资金月报', 'fundMonthly', active), reportTabBtn('资金日报', 'fundDaily', active), reportTabBtn('客户收款汇总', 'customerReceive', active)];
+  const body = active === 'fundMonthly' ? renderReportFundMonthly() : (active === 'fundDaily' ? renderReportFundDaily() : (active === 'customerReceive' ? renderReportCustomerReceive() : renderReportIncomeExpense()));
+  reportShell('财务管理报表', '收支报表、资金统计', tabs, body);
+}
+// 排名报表
+function renderReportsRanking(active) {
+  const tabs = [reportTabBtn('产品订货排名', 'productOrderRank', active), reportTabBtn('产品发货排名', 'productShipRank', active), reportTabBtn('客户订货排名', 'customerOrderRank', active), reportTabBtn('客户发货排名', 'customerShipRank', active), reportTabBtn('供应商采购排名', 'supplierPurchaseRank', active)];
+  const body = (() => {
+    switch (active) {
+      case 'productShipRank': return `<div class="bg-white border border-slate-200 rounded-lg p-4"><p class="text-sm font-semibold text-slate-700 mb-3">产品发货排名</p>${rankBarHTML(rProductRank('shipped'), 'qty', v => String(v), ' 件')}</div>`;
+      case 'customerOrderRank': return `<div class="bg-white border border-slate-200 rounded-lg p-4"><p class="text-sm font-semibold text-slate-700 mb-3">客户订货排名（按金额）</p>${rankBarHTML(rCustomerRank('all'), 'amount', v => formatCurrency(v))}</div>`;
+      case 'customerShipRank': return `<div class="bg-white border border-slate-200 rounded-lg p-4"><p class="text-sm font-semibold text-slate-700 mb-3">客户发货排名（按金额）</p>${rankBarHTML(rCustomerRank('shipped'), 'amount', v => formatCurrency(v))}</div>`;
+      case 'supplierPurchaseRank': return `<div class="bg-white border border-slate-200 rounded-lg p-4"><p class="text-sm font-semibold text-slate-700 mb-3">供应商采购排名</p>${rankBarHTML(rSupplierChart(), 'amount', v => formatCurrency(v))}</div>`;
+      default: return `<div class="bg-white border border-slate-200 rounded-lg p-4"><p class="text-sm font-semibold text-slate-700 mb-3">产品订货排名</p>${rankBarHTML(rProductRank('all'), 'qty', v => String(v), ' 件')}</div>`;
+    }
+  })();
+  reportShell('排名报表', '产品、客户、供应商排名分析', tabs, body);
+}
 function renderReports() {
-  renderReportsSales();
+  renderReportsSales('business');
 }
-
-function renderReportsSales() {
-  document.getElementById('page-title').textContent = '销量管理报';
-  document.getElementById('page-subtitle').textContent = '经营报表、订单状态、客户下单日';
-  
-  const container = document.getElementById('page-content');
-  if (!container) return;
-  
-  container.innerHTML = `
-    <div class="fade-in text-xs">
-      <div class="bg-white border border-slate-200 rounded-lg overflow-hidden mb-4">
-        <div class="flex items-center gap-4 p-3 border-b border-slate-200">
-          <button onclick="switchReportsTab('business')" class="px-3 py-1.5 bg-teal-500 text-white rounded text-xs hover:bg-teal-600">经营报表</button>
-          <button onclick="switchReportsTab('orderStatus')" class="px-3 py-1.5 border border-slate-300 rounded text-xs hover:bg-slate-50">订单状态查询</button>
-          <button onclick="switchReportsTab('dailyOrder')" class="px-3 py-1.5 border border-slate-300 rounded text-xs hover:bg-slate-50">客户下单日报</button>
-        </div>
-      </div>
-      
-      <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
-        <div class="bg-white border border-slate-200 rounded-lg p-4">
-          <p class="text-slate-500 mb-1">今日订单</p>
-          <p class="text-2xl font-bold text-teal-600">${data.salesOrders.length}</p>
-        </div>
-        <div class="bg-white border border-slate-200 rounded-lg p-4">
-          <p class="text-slate-500 mb-1">本月销售额</p>
-          <p class="text-2xl font-bold text-green-600">${formatCurrency(data.salesOrders.reduce((sum, o) => sum + o.totalAmount, 0))}</p>
-        </div>
-        <div class="bg-white border border-slate-200 rounded-lg p-4">
-          <p class="text-slate-500 mb-1">客户</p>
-          <p class="text-2xl font-bold text-blue-600">${data.customers.length}</p>
-        </div>
-      </div>
-      
-      <div class="bg-white border border-slate-200 rounded-lg overflow-hidden">
-        <table class="w-full">
-          <thead class="bg-slate-50">
-            <tr>
-              <th class="px-3 py-2 text-left text-xs font-medium text-slate-600">订单编号</th>
-              <th class="px-3 py-2 text-left text-xs font-medium text-slate-600">客户</th>
-              <th class="px-3 py-2 text-left text-xs font-medium text-slate-600">金额</th>
-              <th class="px-3 py-2 text-left text-xs font-medium text-slate-600">状态</th>
-              <th class="px-3 py-2 text-left text-xs font-medium text-slate-600">日期</th>
-            </tr>
-          </thead>
-          <tbody class="divide-y divide-slate-100">
-            ${data.salesOrders.slice(0, 10).map(order => {
-              const orderNo = order.orderNo || order.orderNumber || order.order_number || order.id || '-';
-              return `
-              <tr class="hover:bg-slate-50">
-                <td class="px-3 py-2 text-xs text-slate-800">${orderNo}</td>
-                <td class="px-3 py-2 text-xs text-slate-600">${getCustomerName(order.customerId)}</td>
-                <td class="px-3 py-2 text-xs text-slate-600">${formatCurrency(order.totalAmount)}</td>
-                <td class="px-3 py-2 text-xs"><span class="px-2 py-0.5 rounded-full text-xs ${getStatusClass(order.status)}">${getStatusText(order.status)}</span></td>
-                <td class="px-3 py-2 text-xs text-slate-600">${order.createdAt?.split('T')[0] || '-'}</td>
-              </tr>
-              `;
-            }).join('')}
-            ${data.salesOrders.length === 0 ? '<tr><td colspan="5" class="px-3 py-8 text-center text-slate-500">暂无订单数据</td></tr>' : ''}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  `;
-}
-
-function renderReportsProduction() {
-  document.getElementById('page-title').textContent = '生产管理报表';
-  document.getElementById('page-subtitle').textContent = '工序产量统计、生产月报表';
-  
-  const container = document.getElementById('page-content');
-  if (!container) return;
-  
-  container.innerHTML = `
-    <div class="fade-in text-xs">
-      <div class="bg-white border border-slate-200 rounded-lg overflow-hidden mb-4">
-        <div class="flex items-center gap-4 p-3 border-b border-slate-200">
-          <button onclick="switchReportsTab('processStats')" class="px-3 py-1.5 border border-slate-300 rounded text-xs hover:bg-slate-50">工序产量统计</button>
-          <button onclick="switchReportsTab('productionMonthly')" class="px-3 py-1.5 border border-slate-300 rounded text-xs hover:bg-slate-50">生产月报/button>
-        </div>
-      </div>
-      
-      <div class="bg-white border border-slate-200 rounded-lg p-6">
-        <div class="text-center text-slate-500">
-          <p class="mb-2">生产管理报表</p>
-          <p class="text-xs">支持工序产量统计、生产月报表等生产数据分</p>
-        </div>
-      </div>
-    </div>
-  `;
-}
-
-function renderReportsInventory() {
-  document.getElementById('page-title').textContent = '库存管理报表';
-  document.getElementById('page-subtitle').textContent = '产品出入库明细、库存统';
-  
-  const container = document.getElementById('page-content');
-  if (!container) return;
-  
-  container.innerHTML = `
-    <div class="fade-in text-xs">
-      <div class="bg-white border border-slate-200 rounded-lg overflow-hidden mb-4">
-        <div class="flex items-center gap-4 p-3 border-b border-slate-200">
-          <button onclick="switchReportsTab('productInDetail')" class="px-3 py-1.5 border border-slate-300 rounded text-xs hover:bg-slate-50">产品入库明细/button>
-          <button onclick="switchReportsTab('productOutDetail')" class="px-3 py-1.5 border border-slate-300 rounded text-xs hover:bg-slate-50">产品出库明细/button>
-          <button onclick="switchReportsTab('productMonthly')" class="px-3 py-1.5 border border-slate-300 rounded text-xs hover:bg-slate-50">成品月度统计/button>
-          <button onclick="switchReportsTab('materialMonthly')" class="px-3 py-1.5 border border-slate-300 rounded text-xs hover:bg-slate-50">月度材料进销存报/button>
-        </div>
-      </div>
-      
-      <div class="bg-white border border-slate-200 rounded-lg overflow-hidden">
-        <table class="w-full">
-          <thead class="bg-slate-50">
-            <tr>
-              <th class="px-3 py-2 text-left text-xs font-medium text-slate-600">产品名称</th>
-              <th class="px-3 py-2 text-left text-xs font-medium text-slate-600">型号</th>
-              <th class="px-3 py-2 text-left text-xs font-medium text-slate-600">库存数量</th>
-              <th class="px-3 py-2 text-left text-xs font-medium text-slate-600">单价</th>
-              <th class="px-3 py-2 text-left text-xs font-medium text-slate-600">库存金额</th>
-            </tr>
-          </thead>
-          <tbody class="divide-y divide-slate-100">
-            ${data.products.map(p => `
-              <tr class="hover:bg-slate-50">
-                <td class="px-3 py-2 text-xs text-slate-800">${p.type || p.name}</td>
-                <td class="px-3 py-2 text-xs text-slate-600">${p.sku || '-'}</td>
-                <td class="px-3 py-2 text-xs text-slate-600">${p.stock || 0}</td>
-                <td class="px-3 py-2 text-xs text-slate-600">${formatCurrency(p.price || 0)}</td>
-                <td class="px-3 py-2 text-xs text-slate-600">${formatCurrency((p.stock || 0) * (p.price || 0))}</td>
-              </tr>
-            `).join('')}
-            ${data.products.length === 0 ? '<tr><td colspan="5" class="px-3 py-8 text-center text-slate-500">暂无产品数据</td></tr>' : ''}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  `;
-}
-
-function renderReportsPurchase() {
-  document.getElementById('page-title').textContent = '采购管理报表';
-  document.getElementById('page-subtitle').textContent = '供应商供货、付款统计';
-  
-  const container = document.getElementById('page-content');
-  if (!container) return;
-  
-  container.innerHTML = `
-    <div class="fade-in text-xs">
-      <div class="bg-white border border-slate-200 rounded-lg overflow-hidden mb-4">
-        <div class="flex items-center gap-4 p-3 border-b border-slate-200">
-          <button onclick="switchReportsTab('supplierChart')" class="px-3 py-1.5 border border-slate-300 rounded text-xs hover:bg-slate-50">供应商供货柱状图</button>
-          <button onclick="switchReportsTab('supplierUnpaid')" class="px-3 py-1.5 border border-slate-300 rounded text-xs hover:bg-slate-50">供应商未付款</button>
-          <button onclick="switchReportsTab('supplierAmount')" class="px-3 py-1.5 border border-slate-300 rounded text-xs hover:bg-slate-50">供应商采购金额</button>
-        </div>
-      </div>
-      
-      <div class="bg-white border border-slate-200 rounded-lg p-6">
-        <div class="text-center text-slate-500">
-          <p class="mb-2">采购管理报表</p>
-          <p class="text-xs">支持供应商供货分析、付款统计等采购数据分析</p>
-        </div>
-      </div>
-    </div>
-  `;
-}
-
-function renderReportsFinance() {
-  document.getElementById('page-title').textContent = '财务管理报表';
-  document.getElementById('page-subtitle').textContent = '收支报表、资金统';
-  
-  const container = document.getElementById('page-content');
-  if (!container) return;
-  
-  container.innerHTML = `
-    <div class="fade-in text-xs">
-      <div class="bg-white border border-slate-200 rounded-lg overflow-hidden mb-4">
-        <div class="flex items-center gap-4 p-3 border-b border-slate-200">
-          <button onclick="switchReportsTab('incomeExpense')" class="px-3 py-1.5 border border-slate-300 rounded text-xs hover:bg-slate-50">收支报表</button>
-          <button onclick="switchReportsTab('fundMonthly')" class="px-3 py-1.5 border border-slate-300 rounded text-xs hover:bg-slate-50">资金月报/button>
-          <button onclick="switchReportsTab('fundDaily')" class="px-3 py-1.5 border border-slate-300 rounded text-xs hover:bg-slate-50">资金日报/button>
-          <button onclick="switchReportsTab('customerReceive')" class="px-3 py-1.5 border border-slate-300 rounded text-xs hover:bg-slate-50">客户收款汇总表</button>
-        </div>
-      </div>
-      
-      <div class="bg-white border border-slate-200 rounded-lg p-6">
-        <div class="text-center text-slate-500">
-          <p class="mb-2">财务管理报表</p>
-          <p class="text-xs">支持收支分析、资金统计等财务数据分析</p>
-        </div>
-      </div>
-    </div>
-  `;
-}
-
-function renderReportsRanking() {
-  document.getElementById('page-title').textContent = '排名报表';
-  document.getElementById('page-subtitle').textContent = '产品、客户、供应商排名分析';
-  
-  const container = document.getElementById('page-content');
-  if (!container) return;
-  
-  container.innerHTML = `
-    <div class="fade-in text-xs">
-      <div class="bg-white border border-slate-200 rounded-lg overflow-hidden mb-4">
-        <div class="flex items-center gap-4 p-3 border-b border-slate-200">
-          <button onclick="switchReportsTab('productOrderRank')" class="px-3 py-1.5 border border-slate-300 rounded text-xs hover:bg-slate-50">产品订货排名</button>
-          <button onclick="switchReportsTab('productShipRank')" class="px-3 py-1.5 border border-slate-300 rounded text-xs hover:bg-slate-50">产品发货排名</button>
-          <button onclick="switchReportsTab('customerOrderRank')" class="px-3 py-1.5 border border-slate-300 rounded text-xs hover:bg-slate-50">客户订货排名</button>
-          <button onclick="switchReportsTab('customerShipRank')" class="px-3 py-1.5 border border-slate-300 rounded text-xs hover:bg-slate-50">客户发货排名</button>
-        </div>
-      </div>
-      
-      <div class="bg-white border border-slate-200 rounded-lg p-6">
-        <div class="text-center text-slate-500">
-          <p class="mb-2">排名报表</p>
-          <p class="text-xs">支持产品、客户、供应商等多维度排名分析</p>
-        </div>
-      </div>
-    </div>
-  `;
-}
-
 function switchReportsTab(tab) {
-  switch(tab) {
-    case 'business': case 'orderStatus': case 'dailyOrder': renderReportsSales(); break;
-    case 'processStats': case 'productionMonthly': renderReportsProduction(); break;
-    case 'productInDetail': case 'productOutDetail': case 'productMonthly': case 'materialMonthly': renderReportsInventory(); break;
-    case 'supplierChart': case 'supplierUnpaid': case 'supplierAmount': renderReportsPurchase(); break;
-    case 'incomeExpense': case 'fundMonthly': case 'fundDaily': case 'customerReceive': renderReportsFinance(); break;
-    case 'productOrderRank': case 'productShipRank': case 'customerOrderRank': case 'customerShipRank': case 'supplierPurchaseRank': case 'materialPurchaseRank': renderReportsRanking(); break;
+  switch (tab) {
+    case 'orderStatus': case 'dailyOrder': case 'business': renderReportsSales(tab); break;
+    case 'productionMonthly': case 'processStats': renderReportsProduction(tab); break;
+    case 'productInDetail': case 'productOutDetail': case 'productMonthly': case 'materialMonthly': renderReportsInventory(tab); break;
+    case 'supplierChart': case 'supplierUnpaid': case 'supplierAmount': renderReportsPurchase(tab); break;
+    case 'incomeExpense': case 'fundMonthly': case 'fundDaily': case 'customerReceive': renderReportsFinance(tab); break;
+    case 'productOrderRank': case 'productShipRank': case 'customerOrderRank': case 'customerShipRank': case 'supplierPurchaseRank': case 'materialPurchaseRank': renderReportsRanking(tab); break;
   }
 }
 

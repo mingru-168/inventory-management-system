@@ -369,23 +369,23 @@
                   <div class="sidebar-dropdown-content-item" onclick="navigateTo('purchase'); renderPurchaseBom();">库存消耗记录</div>
                 </div>
                 <div class="sidebar-dropdown-content">
-                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('purchase'); renderPurchaseOrder();">创建采购单</div>
-                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('purchase'); renderPurchaseOrder();">采购单列表</div>
-                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('purchase'); renderPurchaseOrder();">采购单导入</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('purchase'); renderPurchaseOrder();" data-perm="采购管理-采购订单-查看">创建采购单</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('purchase'); renderPurchaseOrder();" data-perm="采购管理-采购订单-查看">采购单列表</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('purchase'); renderPurchaseOrder();" data-perm="采购管理-采购订单-查看">采购单导入</div>
                 </div>
                 <div class="sidebar-dropdown-content">
-                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('purchase'); renderPurchaseReceive();">无采购单收货</div>
-                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('purchase'); renderPurchaseReceive();">收货单查询</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('purchase'); renderPurchaseReceive();" data-perm="采购管理-采购订单-收货">无采购单收货</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('purchase'); renderPurchaseReceive();" data-perm="采购管理-采购订单-收货">收货单查询</div>
                 </div>
                 <div class="sidebar-dropdown-content">
-                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('purchase'); renderPurchaseReceiveProduct();">无采购单收货</div>
-                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('purchase'); renderPurchaseReceiveProduct();">收货单查询</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('purchase'); renderPurchaseReceiveProduct();" data-perm="采购管理-采购订单-收货">无采购单收货</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('purchase'); renderPurchaseReceiveProduct();" data-perm="采购管理-采购订单-收货">收货单查询</div>
                 </div>
                 <div class="sidebar-dropdown-content">
-                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('purchase'); renderPurchaseReturn();">材料退货</div>
-                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('purchase'); renderPurchaseReturn();">退料单查询</div>
-                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('purchase'); renderPurchaseReturn();">成品退货</div>
-                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('purchase'); renderPurchaseReturn();">成品退货查询</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('purchase'); renderPurchaseReturn();" data-perm="采购管理-采购退货-退货">材料退货</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('purchase'); renderPurchaseReturn();" data-perm="采购管理-采购退货-退货">退料单查询</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('purchase'); renderPurchaseReturn();" data-perm="采购管理-采购退货-退货">成品退货</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('purchase'); renderPurchaseReturn();" data-perm="采购管理-采购退货-退货">成品退货查询</div>
                 </div>
               </div>
             </div>
@@ -525,38 +525,38 @@
               </div>
               <div class="sidebar-dropdown-content-wrapper sidebar-dropdown-content-wrapper-6">
                 <div class="sidebar-dropdown-content">
-                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('reports'); renderReportsSales();">经营报表</div>
-                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('reports'); renderReportsSales();">订单状态查询</div>
-                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('reports'); renderReportsSales();">客户下单日报表</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('reports'); switchReportsTab('business');">经营报表</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('reports'); switchReportsTab('orderStatus');">订单状态查询</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('reports'); switchReportsTab('dailyOrder');">客户下单日报表</div>
                 </div>
                 <div class="sidebar-dropdown-content">
-                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('reports'); renderReportsProduction();">工序产量统计</div>
-                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('reports'); renderReportsProduction();">生产月报表</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('reports'); switchReportsTab('processStats');">工序产量统计</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('reports'); switchReportsTab('productionMonthly');">生产月报表</div>
                 </div>
                 <div class="sidebar-dropdown-content">
-                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('reports'); renderReportsInventory();">产品入库明细表</div>
-                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('reports'); renderReportsInventory();">产品出库明细表</div>
-                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('reports'); renderReportsInventory();">成品月度统计表</div>
-                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('reports'); renderReportsInventory();">月度材料进销存报表</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('reports'); switchReportsTab('productInDetail');">产品入库明细表</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('reports'); switchReportsTab('productOutDetail');">产品出库明细表</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('reports'); switchReportsTab('productMonthly');">成品月度统计表</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('reports'); switchReportsTab('materialMonthly');">月度材料进销存报表</div>
                 </div>
                 <div class="sidebar-dropdown-content">
-                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('reports'); renderReportsPurchase();">供应商供货柱状图</div>
-                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('reports'); renderReportsPurchase();">供应商未付款</div>
-                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('reports'); renderReportsPurchase();">供应商采购金额</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('reports'); switchReportsTab('supplierChart');">供应商供货柱状图</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('reports'); switchReportsTab('supplierUnpaid');">供应商未付款</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('reports'); switchReportsTab('supplierAmount');">供应商采购金额</div>
                 </div>
                 <div class="sidebar-dropdown-content">
-                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('reports'); renderReportsFinance();">收支报表</div>
-                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('reports'); renderReportsFinance();">资金月报表</div>
-                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('reports'); renderReportsFinance();">资金日报表</div>
-                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('reports'); renderReportsFinance();">客户收款汇总表</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('reports'); switchReportsTab('incomeExpense');">收支报表</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('reports'); switchReportsTab('fundMonthly');">资金月报表</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('reports'); switchReportsTab('fundDaily');">资金日报表</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('reports'); switchReportsTab('customerReceive');">客户收款汇总表</div>
                 </div>
                 <div class="sidebar-dropdown-content">
-                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('reports'); renderReportsRanking();">产品订货排名</div>
-                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('reports'); renderReportsRanking();">产品发货排名</div>
-                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('reports'); renderReportsRanking();">客户订货排名</div>
-                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('reports'); renderReportsRanking();">客户发货排名</div>
-                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('reports'); renderReportsRanking();">供应商采购排名</div>
-                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('reports'); renderReportsRanking();">材料采购排名</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('reports'); switchReportsTab('productOrderRank');">产品订货排名</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('reports'); switchReportsTab('productShipRank');">产品发货排名</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('reports'); switchReportsTab('customerOrderRank');">客户订货排名</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('reports'); switchReportsTab('customerShipRank');">客户发货排名</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('reports'); switchReportsTab('supplierPurchaseRank');">供应商采购排名</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('reports'); switchReportsTab('productOrderRank');">材料采购排名</div>
                 </div>
               </div>
             </div>

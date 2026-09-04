@@ -144,7 +144,7 @@ function ensureDataIntegrity(obj) {
     'products', 'inventory', 'warehouses', 'customers', 'suppliers', 'salesOrders',
     'purchaseOrders', 'planOrders', 'processes', 'productionOrders', 'financeRecords',
     'stockInRecords', 'productSpecPrices', 'users', 'roles', 'allocationRecords',
-    'orderTrackingRecords', 'inventoryLocks', 'auditLogs', 'exchangeRecords'
+    'orderTrackingRecords', 'inventoryLocks', 'auditLogs', 'exchangeRecords', 'purchaseReturns'
   ];
   collections.forEach(k => {
     if (!Array.isArray(obj[k])) obj[k] = [];
@@ -1411,13 +1411,38 @@ app.put('/api/purchase-orders/:id', (req, res) => {
   if (order) {
     Object.assign(order, pick(req.body, { supplierId: 'string', supplier_id: 'string', supplierName: 'string', supplier_name: 'string', supplier: 'string', contact: 'string', phone: 'string', address: 'string', items: true, orderDate: 'string', order_date: 'string', totalAmount: true, total_amount: true, remark: 'string', note: 'string', warehouse: 'string', expectedDate: 'string', status: 'string', productName: 'string', product_id: true, productId: true, quantity: true, unit: 'string', unitPrice: true, price: true, color: 'string', spec: 'string' }));
     
-    if (req.body.status === 'completed') {
-      order.items.forEach(item => {
-        const inv = data.inventory.find(i => i.productId === item.productId);
+    // 状态推进到 completed 时回补库存（仅在未入库过时执行一次，避免与收货重复入库）
+    if (req.body.status === 'completed' && order.stocked !== true) {
+      if (!data.stockInRecords) data.stockInRecords = [];
+      (order.items || []).forEach(item => {
+        if (!item || !item.productId) return;
+        const qty = Number(item.quantity) || 0;
+        if (qty <= 0) return;
+        const inv = data.inventory.find(i => String(i.productId) === String(item.productId));
         if (inv) {
-          inv.quantity += item.quantity;
+          inv.quantity = (Number(inv.quantity) || 0) + qty;
+          inv.updatedAt = new Date().toISOString();
+        } else {
+          data.inventory.push({ id: generateId(), productId: item.productId, quantity: qty, minStock: 0, warehouse: order.warehouse || '主仓库' });
         }
+        data.stockInRecords.push({
+          id: generateId(),
+          productId: item.productId,
+          productName: String(item.productName || item.name || ''),
+          productModel: String(item.productModel || item.model || ''),
+          quantity: qty,
+          warehouse: order.warehouse || '主仓库',
+          color: String(item.color || ''),
+          spec: String(item.spec || ''),
+          unit: String(item.unit || ''),
+          remark: `采购订单 ${order.orderNo || ''} 完成入库`,
+          type: '采购入库',
+          relatedOrderId: order.id,
+          operator: req.user ? (req.user.username || '') : '',
+          createdAt: new Date().toISOString()
+        });
       });
+      order.stocked = true;
     }
     
     saveData();
@@ -1425,6 +1450,130 @@ app.put('/api/purchase-orders/:id', (req, res) => {
   } else {
     res.status(404).json({ error: 'Order not found' });
   }
+});
+
+// 作废待收采购单（仅未收货/未结算的 pending 可删），同时移除其关联采购支出财务记录
+app.delete('/api/purchase-orders/:id', requirePerm('采购管理', '采购订单', '删除'), (req, res) => {
+  const order = data.purchaseOrders.find(o => String(o.id) === String(req.params.id));
+  if (!order) return res.status(404).json({ success: false, message: '采购单不存在' });
+  if (!['pending'].includes(order.status)) {
+    return res.status(400).json({ success: false, message: '仅待收货的采购单可作废' });
+  }
+  // 移除关联的采购支出财务记录
+  if (Array.isArray(data.financeRecords)) {
+    data.financeRecords = data.financeRecords.filter(r => !(r.relatedOrderId === order.id && r.type === 'expense'));
+  }
+  data.purchaseOrders = data.purchaseOrders.filter(o => o.id !== order.id);
+  saveData();
+  logAudit('作废采购单', `采购单 ${order.orderNo} 已作废删除`, req.user?.name);
+  res.json({ success: true });
+});
+
+// 采购收货：按明细回补库存并记录入库，推进采购单状态（pending→received/completed），避免重复入库
+app.post('/api/purchase-orders/:id/receive', requirePerm('采购管理', '采购订单', '收货'), (req, res) => {
+  const order = data.purchaseOrders.find(o => String(o.id) === String(req.params.id));
+  if (!order) return res.status(404).json({ success: false, message: '采购单不存在' });
+  if (order.stocked === true || ['completed'].includes(order.status)) {
+    return res.status(400).json({ success: false, message: '该采购单已完成收货，请勿重复操作' });
+  }
+  if (!data.stockInRecords) data.stockInRecords = [];
+  const warehouse = String(req.body.warehouse || order.warehouse || '主仓库');
+  (order.items || []).forEach(item => {
+    if (!item || !item.productId) return;
+    const qty = Number(item.quantity) || 0;
+    if (qty <= 0) return;
+    const inv = data.inventory.find(i => String(i.productId) === String(item.productId));
+    if (inv) {
+      inv.quantity = (Number(inv.quantity) || 0) + qty;
+      inv.updatedAt = new Date().toISOString();
+    } else {
+      data.inventory.push({ id: generateId(), productId: item.productId, quantity: qty, minStock: 0, warehouse });
+    }
+    data.stockInRecords.push({
+      id: generateId(),
+      productId: item.productId,
+      productName: String(item.productName || item.name || ''),
+      productModel: String(item.productModel || item.model || ''),
+      quantity: qty,
+      warehouse,
+      color: String(item.color || ''),
+      spec: String(item.spec || ''),
+      unit: String(item.unit || ''),
+      remark: `采购订单 ${order.orderNo || ''} 收货`,
+      type: '采购收货',
+      relatedOrderId: order.id,
+      operator: req.user ? (req.user.username || '') : '',
+      createdAt: new Date().toISOString()
+    });
+  });
+  order.stocked = true;
+  order.status = String(req.body.status || 'received') === 'completed' ? 'completed' : 'received';
+  order.receivedAt = new Date().toISOString();
+  order.receivedBy = req.user ? (req.user.username || '') : '';
+  order.updatedAt = new Date().toISOString();
+  saveData();
+  logAudit('采购收货', `采购单 ${order.orderNo} 已收货入库`, req.user?.name);
+  res.json({ success: true, order });
+});
+
+// 采购退货：红冲库存与采购支出财务记录
+app.post('/api/purchase-returns', requirePerm('采购管理', '采购退货', '退货'), (req, res) => {
+  const productId = String(req.body.productId || req.body.product_id || '');
+  let qty = Number(req.body.quantity) || 0;
+  if (!productId || qty <= 0) return res.status(400).json({ success: false, message: '请选择产品并填写正确的退货数量' });
+
+  // 关联采购单单价，用于估算退货金额（负值冲减采购支出）
+  let unitEstimate = Number(req.body.amount) || 0;
+  if (!unitEstimate) {
+    const po = data.purchaseOrders.find(o => String(o.id) === String(req.body.purchaseOrderId) && Array.isArray(o.items));
+    const line = po && po.items.find(it => String(it.productId) === String(productId));
+    if (line) unitEstimate = Number(line.unitPrice || line.price || 0);
+  }
+  if (!unitEstimate) unitEstimate = 0;
+
+  // 红冲库存
+  const inv = data.inventory.find(i => String(i.productId) === productId);
+  if (inv) {
+    const current = Number(inv.quantity) || 0;
+    const back = Math.min(current, qty);
+    inv.quantity = current - back;
+    inv.updatedAt = new Date().toISOString();
+    qty = back; // 实际冲减的数量（不超过现有库存）
+  } else {
+    return res.status(400).json({ success: false, message: '未找到对应库存记录，无法退货' });
+  }
+
+  const returnAmount = -1 * Math.abs(qty) * Math.abs(unitEstimate);
+  data.financeRecords.push({
+    id: generateId(),
+    type: 'expense',
+    category: '采购退货(红冲)',
+    amount: returnAmount,
+    date: new Date().toISOString().slice(0, 10),
+    description: `采购退货 ${qty} 件`,
+    relatedOrderId: String(req.body.purchaseOrderId || '')
+  });
+
+  const returnRec = {
+    id: generateId(),
+    productId,
+    productName: String(req.body.productName || inv.productName || ''),
+    quantity: qty,
+    amount: returnAmount,
+    returnReason: String(req.body.returnReason || req.body.remark || ''),
+    operator: req.user ? (req.user.username || '') : '',
+    createdAt: new Date().toISOString()
+  };
+  if (!data.purchaseReturns) data.purchaseReturns = [];
+  data.purchaseReturns.push(returnRec);
+
+  saveData();
+  logAudit('采购退货', `产品 ${productId} 退货 ${qty} 件，红冲 ${-returnAmount} 元`, req.user?.name);
+  res.json({ success: true, record: returnRec });
+});
+
+app.get('/api/purchase-returns', (req, res) => {
+  res.json(data.purchaseReturns || []);
 });
 
 app.get('/api/warehouses', (req, res) => {
