@@ -140,7 +140,8 @@ const initialData = {
   warehouseLocations: [],
   stockOutRecords: [],
   warehouseTransfers: [],
-  stocktakes: []
+  stocktakes: [],
+  bomConfigs: []
 };
 
 // ===== 数据完整性检查：确保所有核心集合存在，防止旧数据缺字段导致崩溃 =====
@@ -150,7 +151,8 @@ function ensureDataIntegrity(obj) {
     'purchaseOrders', 'planOrders', 'processes', 'productionOrders', 'financeRecords',
     'stockInRecords', 'productSpecPrices', 'users', 'roles', 'allocationRecords',
     'orderTrackingRecords', 'inventoryLocks', 'auditLogs', 'exchangeRecords', 'purchaseReturns',
-    'notifications', 'warehouseLocations', 'stockOutRecords', 'warehouseTransfers', 'stocktakes'
+    'notifications', 'warehouseLocations', 'stockOutRecords', 'warehouseTransfers', 'stocktakes',
+    'bomConfigs'
   ];
   collections.forEach(k => {
     if (!Array.isArray(obj[k])) obj[k] = [];
@@ -1739,6 +1741,93 @@ app.delete('/api/warehouse-locations/:id', requirePerm('库存管理', '仓位',
   const deleted = data.warehouseLocations.splice(idx, 1)[0];
   saveData();
   logAudit('仓位删除', `删除仓位 ${deleted.name}`, req.user && req.user.name);
+  res.json(deleted);
+});
+
+// ==================== BOM 配置 API ====================
+app.get('/api/bom-configs', (req, res) => {
+  res.json(data.bomConfigs || []);
+});
+
+app.post('/api/bom-configs', requirePerm('采购管理', '材料审核', '添加'), (req, res) => {
+  const productModel = String(req.body.productModel || '').trim();
+  const productName = String(req.body.productName || '').trim();
+  if (!productModel || !productName) return res.status(400).json({ error: '产品型号和名称不能为空' });
+  const materials = Array.isArray(req.body.materials) ? req.body.materials.map((m, i) => ({
+    seq: Number(m.seq) || i + 1,
+    name: String(m.name || '').trim(),
+    model: String(m.model || '').trim(),
+    type: String(m.type || '').trim(),
+    process: String(m.process || '').trim(),
+    spec: String(m.spec || '').trim(),
+    color: String(m.color || '').trim(),
+    quantity: m.quantity === '' || m.quantity == null ? '' : Number(m.quantity),
+    unit: String(m.unit || '').trim()
+  })) : [];
+  const bom = {
+    id: generateId(),
+    productModel,
+    productName,
+    color: String(req.body.color || '').trim(),
+    spec: String(req.body.spec || '').trim(),
+    tabletopColor: String(req.body.tabletopColor || '').trim(),
+    version: String(req.body.version || '').trim(),
+    refProduct: String(req.body.refProduct || '').trim(),
+    refBomId: String(req.body.refBomId || '').trim(),
+    materials,
+    creator: (req.user && (req.user.name || req.user.username)) || '系统',
+    createdAt: new Date().toISOString()
+  };
+  data.bomConfigs.push(bom);
+  saveData();
+  logAudit('BOM新增', `新增 BOM ${bom.productModel} ${bom.productName}（${materials.length} 种材料）`, req.user && req.user.name);
+  res.json(bom);
+});
+
+app.put('/api/bom-configs/:id', requirePerm('采购管理', '材料审核', '编辑'), (req, res) => {
+  const idx = (data.bomConfigs || []).findIndex(b => String(b.id) === String(req.params.id));
+  if (idx === -1) return res.status(404).json({ error: 'BOM 配置不存在' });
+  const old = data.bomConfigs[idx];
+  const productModel = String(req.body.productModel || old.productModel || '').trim();
+  const productName = String(req.body.productName || old.productName || '').trim();
+  if (!productModel || !productName) return res.status(400).json({ error: '产品型号和名称不能为空' });
+  const materials = Array.isArray(req.body.materials) ? req.body.materials.map((m, i) => ({
+    seq: Number(m.seq) || i + 1,
+    name: String(m.name || '').trim(),
+    model: String(m.model || '').trim(),
+    type: String(m.type || '').trim(),
+    process: String(m.process || '').trim(),
+    spec: String(m.spec || '').trim(),
+    color: String(m.color || '').trim(),
+    quantity: m.quantity === '' || m.quantity == null ? '' : Number(m.quantity),
+    unit: String(m.unit || '').trim()
+  })) : old.materials || [];
+  const updated = {
+    ...old,
+    productModel,
+    productName,
+    color: String(req.body.color ?? old.color ?? '').trim(),
+    spec: String(req.body.spec ?? old.spec ?? '').trim(),
+    tabletopColor: String(req.body.tabletopColor ?? old.tabletopColor ?? '').trim(),
+    version: String(req.body.version ?? old.version ?? '').trim(),
+    refProduct: String(req.body.refProduct ?? old.refProduct ?? '').trim(),
+    refBomId: String(req.body.refBomId ?? old.refBomId ?? '').trim(),
+    materials,
+    modifier: (req.user && (req.user.name || req.user.username)) || '系统',
+    updatedAt: new Date().toISOString()
+  };
+  data.bomConfigs[idx] = updated;
+  saveData();
+  logAudit('BOM编辑', `编辑 BOM ${updated.productModel} ${updated.productName}`, req.user && req.user.name);
+  res.json(updated);
+});
+
+app.delete('/api/bom-configs/:id', requirePerm('采购管理', '材料审核', '删除'), (req, res) => {
+  const idx = (data.bomConfigs || []).findIndex(b => String(b.id) === String(req.params.id));
+  if (idx === -1) return res.status(404).json({ error: 'BOM 配置不存在' });
+  const deleted = data.bomConfigs.splice(idx, 1)[0];
+  saveData();
+  logAudit('BOM删除', `删除 BOM ${deleted.productModel} ${deleted.productName}`, req.user && req.user.name);
   res.json(deleted);
 });
 

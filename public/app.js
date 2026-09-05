@@ -1661,7 +1661,7 @@ function getSupplierName(id) {
 async function fetchData() {
   // console.log('fetchData started - loading all data from backend database');
   try {
-    const [products, inventory, customers, suppliers, salesOrders, purchaseOrders, financeRecords, users, roles, stockInRecords, planOrders, processes, warehouseLocations, stockOutRecords, warehouseTransfers, stocktakes] = await Promise.all([
+    const [products, inventory, customers, suppliers, salesOrders, purchaseOrders, financeRecords, users, roles, stockInRecords, planOrders, processes, warehouseLocations, stockOutRecords, warehouseTransfers, stocktakes, bomConfigs] = await Promise.all([
       fetch('/api/products').then(r => r.json()),
       fetch('/api/inventory').then(r => r.json()),
       fetch('/api/customers').then(r => r.json()),
@@ -1677,10 +1677,11 @@ async function fetchData() {
       fetch('/api/warehouse-locations').then(r => r.json()),
       fetch('/api/stock-out-records').then(r => r.json()),
       fetch('/api/warehouse-transfers').then(r => r.json()),
-      fetch('/api/stocktakes').then(r => r.json())
+      fetch('/api/stocktakes').then(r => r.json()),
+      fetch('/api/bom-configs').then(r => r.json())
     ]);
     
-    data = { products, inventory, customers, suppliers, salesOrders, purchaseOrders, financeRecords, users, roles, stockRecords: [], stockInRecords, planOrders, processes, warehouseLocations, stockOutRecords, warehouseTransfers, stocktakes };
+    data = { products, inventory, customers, suppliers, salesOrders, purchaseOrders, financeRecords, users, roles, stockRecords: [], stockInRecords, planOrders, processes, warehouseLocations, stockOutRecords, warehouseTransfers, stocktakes, bomConfigs };
     
     // 仓位数据已上后端：本地变量同步后端集合（迁移旧的 localStorage 仓位）
     locationData = Array.isArray(warehouseLocations) ? warehouseLocations : [];
@@ -7957,26 +7958,303 @@ function renderPurchase() {
 function renderPurchaseBom() {
   document.getElementById('page-title').textContent = '材料审核 - BOM';
   document.getElementById('page-subtitle').textContent = 'BOM配置和订单用料核对';
-  
+
   const container = document.getElementById('page-content');
   if (!container) return;
-  
+
+  const list = Array.isArray(data.bomConfigs) ? data.bomConfigs : [];
+  // 渲染主列表（搜索由 renderBomList 负责）
   container.innerHTML = `
     <div class="fade-in">
-    <div class="mb-6 flex items-center justify-between">
-      <h3 class="text-lg font-semibold text-slate-800">BOM配置</h3>
-      <button onclick="renderPurchaseBom()" class="px-4 py-2 bg-teal-500 text-white rounded-lg hover:bg-teal-600">
-        新建BOM
-      </button>
-    </div>
-    
-    <div class="bg-white rounded-xl shadow-sm overflow-hidden">
-      <div class="p-12 text-center text-slate-500">
-        <p>BOM配置功能开发中...</p>
+      <div class="mb-4 flex items-center justify-between">
+        <div>
+          <h3 class="text-lg font-semibold text-slate-800">BOM-配置</h3>
+          <p class="text-xs text-slate-400 mt-0.5">新增 / 维护生产材料定额定义</p>
+        </div>
+        <button onclick="openBomModal()" class="px-4 py-2 bg-teal-500 text-white rounded-lg hover:bg-teal-600 text-sm">
+          + 新增 BOM
+        </button>
+      </div>
+      <div class="bg-white rounded-xl shadow-sm overflow-hidden">
+        <div class="p-4 border-b border-slate-100">
+          <input id="bomSearch" type="text" placeholder="搜索型号 / 名称 / 颜色 / 规格 / 台面颜色 / 版本..."
+            class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
+            oninput="renderBomList()">
+        </div>
+        <div id="bomTableWrap" class="overflow-x-auto"></div>
       </div>
     </div>
+  `;
+  renderBomList();
+}
+
+function renderBomList() {
+  const wrap = document.getElementById('bomTableWrap');
+  if (!wrap) return;
+  const list = Array.isArray(data.bomConfigs) ? data.bomConfigs : [];
+  const kw = (document.getElementById('bomSearch')?.value || '').trim().toLowerCase();
+  const filtered = kw
+    ? list.filter(b =>
+        [b.productModel, b.productName, b.color, b.spec, b.tabletopColor, b.version]
+          .some(v => String(v || '').toLowerCase().includes(kw)))
+    : list;
+
+  const rows = filtered.map(b => `
+    <tr class="border-b border-slate-100 hover:bg-slate-50">
+      <td class="px-4 py-3 text-sm text-slate-700 font-medium">${esc(b.productModel || '')}</td>
+      <td class="px-4 py-3 text-sm text-slate-700">${esc(b.productName || '')}</td>
+      <td class="px-4 py-3 text-sm text-slate-600">${esc(b.color || '')}</td>
+      <td class="px-4 py-3 text-sm text-slate-600">${esc(b.spec || '')}</td>
+      <td class="px-4 py-3 text-sm text-slate-600">${esc(b.tabletopColor || '')}</td>
+      <td class="px-4 py-3 text-sm text-slate-600">${esc(b.version || '')}</td>
+      <td class="px-4 py-3 text-sm text-slate-700 text-center">${Array.isArray(b.materials) ? b.materials.length : 0}</td>
+      <td class="px-4 py-3 text-sm">
+        <div class="flex gap-2">
+          <button onclick="openBomModal('${esc(b.id)}')" class="px-3 py-1 text-xs border border-slate-300 rounded hover:bg-slate-100">编辑</button>
+          <button onclick="deleteBom('${esc(b.id)}')" class="px-3 py-1 text-xs border border-red-300 text-red-600 rounded hover:bg-red-50">删除</button>
+        </div>
+      </td>
+    </tr>`).join('');
+
+  wrap.innerHTML = `
+    <table class="w-full divide-y divide-slate-200">
+      <thead>
+        <tr class="bg-slate-50 text-left text-xs font-medium text-slate-500">
+          <th class="px-4 py-3">型号</th>
+          <th class="px-4 py-3">名称</th>
+          <th class="px-4 py-3">颜色</th>
+          <th class="px-4 py-3">规格</th>
+          <th class="px-4 py-3">台面颜色</th>
+          <th class="px-4 py-3">版本说明</th>
+          <th class="px-4 py-3 text-center">材料数</th>
+          <th class="px-4 py-3">操作</th>
+        </tr>
+      </thead>
+      <tbody>${rows || '<tr><td colspan="8" class="px-4 py-12 text-center text-slate-400 text-sm">暂无 BOM 配置，点击右上角「+ 新增 BOM」创建</td></tr>'}</tbody>
+    </table>
+  `;
+}
+
+function openBomModal(id) {
+  const products = Array.isArray(data.products) ? data.products : [];
+  const boms = Array.isArray(data.bomConfigs) ? data.bomConfigs : [];
+  const editing = id ? boms.find(b => String(b.id) === String(id)) : null;
+
+  // 去重下拉选项（来自产品）
+  const uniq = (key) => [...new Set(products.map(p => String(p[key] || '')).filter(Boolean))].sort();
+  const models = uniq('model');
+  const names = uniq('name');
+  const colors = uniq('color');
+  const specs = uniq('spec');
+  const tabletopColors = uniq('tabletopColor');
+  // 手动输入 + 数据源搜索建议（datalist）
+  const dlOpts = (arr) => arr.map(v => `<option value="${esc(v)}"></option>`).join('');
+  const dl = (id, arr) => `<datalist id="${id}">${dlOpts(arr)}</datalist>`;
+
+  const bomOpts = boms.map(b => `<option value="${esc(b.id)}">${esc(b.productModel || '')} ${esc(b.productName || '')}${b.version ? ' / ' + esc(b.version) : ''}</option>`).join('');
+
+  const materials = editing && Array.isArray(editing.materials) && editing.materials.length
+    ? editing.materials
+    : [{ seq: 1, name: '', model: '', type: '', process: '', spec: '', color: '', quantity: '', unit: '' }];
+
+  const matRows = materials.map((m, i) => bomMaterialRow(i, m)).join('');
+
+  const modalId = 'bomModal';
+  document.getElementById(modalId) && document.getElementById(modalId).remove();
+  const html = `
+    <div id="${modalId}" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+      <div class="bg-white rounded-xl w-full max-w-5xl max-h-[92vh] overflow-auto shadow-xl">
+        <div class="bg-gradient-to-r from-teal-500 to-teal-600 px-6 py-4 flex items-center justify-between sticky top-0 z-10">
+          <h3 class="text-lg font-semibold text-white">${editing ? '编辑 BOM 配置' : '新增 BOM 配置'}</h3>
+          <button onclick="document.getElementById('${modalId}').remove()" class="text-white/80 hover:text-white text-2xl leading-none">&times;</button>
+        </div>
+        <div class="p-6 space-y-4">
+          ${dl('bom_dl_model', models)}${dl('bom_dl_name', names)}${dl('bom_dl_color', colors)}${dl('bom_dl_spec', specs)}${dl('bom_dl_tabletop', tabletopColors)}
+          <div class="grid grid-cols-2 md:grid-cols-3 gap-4">
+            <div>
+              <label class="block text-xs font-medium text-slate-500 mb-1">产品型号 *</label>
+              <input id="bom_productModel" list="bom_dl_model" value="${esc(editing?.productModel || '')}" placeholder="输入或选择型号" onchange="linkBomProduct()" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500">
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-slate-500 mb-1">产品名称 *</label>
+              <input id="bom_productName" list="bom_dl_name" value="${esc(editing?.productName || '')}" placeholder="输入或选择名称" onchange="linkBomProduct()" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500">
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-slate-500 mb-1">颜色</label>
+              <input id="bom_color" list="bom_dl_color" value="${esc(editing?.color || '')}" placeholder="可手动输入" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500">
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-slate-500 mb-1">规格</label>
+              <input id="bom_spec" list="bom_dl_spec" value="${esc(editing?.spec || '')}" placeholder="可手动输入" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500">
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-slate-500 mb-1">台面颜色</label>
+              <input id="bom_tabletopColor" list="bom_dl_tabletop" value="${esc(editing?.tabletopColor || '')}" placeholder="可手动输入" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500">
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-slate-500 mb-1">版本说明</label>
+              <input id="bom_version" type="text" value="${esc(editing?.version || '')}" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm">
+            </div>
+          </div>
+
+          <div class="grid grid-cols-2 gap-4">
+            <div>
+              <label class="block text-xs font-medium text-slate-500 mb-1">参照产品</label>
+              <select id="bom_refProduct" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm">
+                <option value="">请选择</option>
+                ${boms.map(b => `<option value="${esc(b.productModel || '')}"${b.productModel === editing?.refProduct ? ' selected' : ''}>${esc(b.productModel || '')} ${esc(b.productName || '')}</option>`).join('')}
+              </select>
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-slate-500 mb-1">参照配置项（导入其材料明细）</label>
+              <select id="bom_refBomId" onchange="importBomMaterials(this.value)" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm">
+                <option value="">请选择</option>
+                ${bomOpts}
+              </select>
+            </div>
+          </div>
+
+          <div class="border-t border-slate-100 pt-4">
+            <div class="flex items-center justify-between mb-2">
+              <label class="block text-sm font-medium text-slate-700">材料明细</label>
+              <button onclick="addBomMaterialRow()" class="px-3 py-1.5 text-xs bg-teal-50 text-teal-600 border border-teal-200 rounded hover:bg-teal-100">+ 添加材料</button>
+            </div>
+            <div class="overflow-x-auto border border-slate-200 rounded-lg">
+              <table class="w-full text-sm">
+                <thead class="bg-slate-50 text-xs text-slate-500">
+                  <tr>
+                    <th class="px-2 py-2 w-10">操作</th>
+                    <th class="px-2 py-2 w-14">序号</th>
+                    <th class="px-2 py-2">材料名称</th>
+                    <th class="px-2 py-2">型号</th>
+                    <th class="px-2 py-2">类型</th>
+                    <th class="px-2 py-2">工序</th>
+                    <th class="px-2 py-2">规格</th>
+                    <th class="px-2 py-2">颜色</th>
+                    <th class="px-2 py-2 w-20">用量</th>
+                    <th class="px-2 py-2 w-16">单位</th>
+                  </tr>
+                </thead>
+                <tbody id="bomMatBody">${matRows}</tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="flex justify-end gap-2 pt-2">
+            <button onclick="document.getElementById('${modalId}').remove()" class="px-4 py-2 border border-slate-300 text-slate-600 rounded-lg hover:bg-slate-100 text-sm">取消</button>
+            <button onclick="saveBom('${editing ? esc(editing.id) : ''}')" class="px-4 py-2 bg-teal-500 text-white rounded-lg hover:bg-teal-600 text-sm">保存</button>
+          </div>
+        </div>
+      </div>
     </div>
   `;
+  document.body.insertAdjacentHTML('beforeend', html);
+}
+
+function linkBomProduct() {
+  const products = Array.isArray(data.products) ? data.products : [];
+  const model = (document.getElementById('bom_productModel')?.value || '').trim();
+  const name = (document.getElementById('bom_productName')?.value || '').trim();
+  if (!model && !name) return;
+  const p = products.find(x =>
+    (model && String(x.model || '').toLowerCase() === model.toLowerCase()) ||
+    (name && String(x.name || '').toLowerCase() === name.toLowerCase()));
+  if (!p) return;
+  const set = (id, val) => { const el = document.getElementById(id); if (el && val != null && String(val).trim() !== '') el.value = String(val); };
+  set('bom_color', p.color);
+  set('bom_spec', p.spec);
+  set('bom_tabletopColor', p.tabletopColor);
+}
+
+function bomMaterialRow(i, m) {
+  const f = (val) => esc(val == null ? '' : val);
+  return `
+    <tr class="border-t border-slate-100 bom-mat-row">
+      <td class="px-2 py-1 text-center"><button onclick="this.closest('tr').remove()" class="text-red-500 hover:text-red-700 text-sm" title="删除">×</button></td>
+      <td class="px-2 py-1"><input type="number" value="${f(m.seq)}" data-field="seq" class="w-full px-1 py-1 border border-slate-200 rounded text-xs"></td>
+      <td class="px-2 py-1"><input type="text" value="${f(m.name)}" data-field="name" class="w-full px-1 py-1 border border-slate-200 rounded text-xs"></td>
+      <td class="px-2 py-1"><input type="text" value="${f(m.model)}" data-field="model" class="w-full px-1 py-1 border border-slate-200 rounded text-xs"></td>
+      <td class="px-2 py-1"><input type="text" value="${f(m.type)}" data-field="type" class="w-full px-1 py-1 border border-slate-200 rounded text-xs"></td>
+      <td class="px-2 py-1"><input type="text" value="${f(m.process)}" data-field="process" class="w-full px-1 py-1 border border-slate-200 rounded text-xs"></td>
+      <td class="px-2 py-1"><input type="text" value="${f(m.spec)}" data-field="spec" class="w-full px-1 py-1 border border-slate-200 rounded text-xs"></td>
+      <td class="px-2 py-1"><input type="text" value="${f(m.color)}" data-field="color" class="w-full px-1 py-1 border border-slate-200 rounded text-xs"></td>
+      <td class="px-2 py-1"><input type="number" step="0.01" value="${f(m.quantity)}" data-field="quantity" class="w-full px-1 py-1 border border-slate-200 rounded text-xs"></td>
+      <td class="px-2 py-1"><input type="text" value="${f(m.unit)}" data-field="unit" class="w-full px-1 py-1 border border-slate-200 rounded text-xs"></td>
+    </tr>`;
+}
+
+function addBomMaterialRow() {
+  const body = document.getElementById('bomMatBody');
+  if (!body) return;
+  const rows = body.querySelectorAll('.bom-mat-row');
+  const nextSeq = rows.length + 1;
+  body.insertAdjacentHTML('beforeend', bomMaterialRow(rows.length, { seq: nextSeq }));
+}
+
+function importBomMaterials(refBomId) {
+  if (!refBomId) return;
+  const boms = Array.isArray(data.bomConfigs) ? data.bomConfigs : [];
+  const ref = boms.find(b => String(b.id) === String(refBomId));
+  if (!ref || !Array.isArray(ref.materials)) return;
+  const body = document.getElementById('bomMatBody');
+  if (!body) return;
+  if (body.querySelector('.bom-mat-row')) {
+    if (!confirm('导入将覆盖当前材料明细，是否继续？')) return;
+  }
+  body.innerHTML = ref.materials.map((m, i) => bomMaterialRow(i, m)).join('');
+}
+
+async function saveBom(id) {
+  const g = (sel) => document.getElementById(sel)?.value ?? '';
+  const productModel = g('bom_productModel').trim();
+  const productName = g('bom_productName').trim();
+  if (!productModel || !productName) { showAlertModal('提示', '请选择产品型号和名称'); return; }
+
+  const materials = [...document.querySelectorAll('#bomMatBody .bom-mat-row')].map(tr => {
+    const obj = {};
+    tr.querySelectorAll('[data-field]').forEach(inp => { obj[inp.dataset.field] = inp.value; });
+    return obj;
+  });
+
+  const payload = {
+    productModel, productName,
+    color: g('bom_color'), spec: g('bom_spec'), tabletopColor: g('bom_tabletopColor'),
+    version: g('bom_version'), refProduct: g('bom_refProduct'), refBomId: g('bom_refBomId'),
+    materials
+  };
+
+  try {
+    const token = sessionStorage.getItem(LOGIN_TOKEN_KEY);
+    const url = id ? `/api/bom-configs/${encodeURIComponent(id)}` : '/api/bom-configs';
+    const res = await fetch(url, {
+      method: id ? 'PUT' : 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': token || '' },
+      body: JSON.stringify(payload)
+    });
+    if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j.error || '保存失败'); }
+    document.getElementById('bomModal')?.remove();
+    showSuccessModal(id ? 'BOM 已更新' : 'BOM 已创建');
+    await fetchData();
+    renderBomList();
+  } catch (e) {
+    showAlertModal('保存失败', e.message || '保存出现异常');
+  }
+}
+
+async function deleteBom(id) {
+  if (!confirm('确定删除该 BOM 配置？')) return;
+  try {
+    const token = sessionStorage.getItem(LOGIN_TOKEN_KEY);
+    const res = await fetch(`/api/bom-configs/${encodeURIComponent(id)}`, {
+      method: 'DELETE', headers: { 'Authorization': token || '' }
+    });
+    if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j.error || '删除失败'); }
+    showSuccessModal('已删除');
+    await fetchData();
+    renderBomList();
+  } catch (e) {
+    showAlertModal('删除失败', e.message || '删除出现异常');
+  }
 }
 
 function renderPurchaseOrder() {
