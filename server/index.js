@@ -59,7 +59,7 @@ app.use((req, res, next) => {
   res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
   res.setHeader('Content-Security-Policy',
     "default-src 'self'; " +
-    "script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com; " +
+    "script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com https://cdn.jsdelivr.net; " +
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.tailwindcss.com; " +
     "font-src 'self' https://fonts.gstatic.com https://fonts.googleapis.com data:; " +
     "img-src 'self' data: blob: https: http:; " +
@@ -135,7 +135,11 @@ const initialData = {
   orderTrackingRecords: [],
   inventoryLocks: [],
   auditLogs: [],
-  exchangeRecords: []
+  exchangeRecords: [],
+  warehouseLocations: [],
+  stockOutRecords: [],
+  warehouseTransfers: [],
+  stocktakes: []
 };
 
 // ===== 数据完整性检查：确保所有核心集合存在，防止旧数据缺字段导致崩溃 =====
@@ -145,7 +149,7 @@ function ensureDataIntegrity(obj) {
     'purchaseOrders', 'planOrders', 'processes', 'productionOrders', 'financeRecords',
     'stockInRecords', 'productSpecPrices', 'users', 'roles', 'allocationRecords',
     'orderTrackingRecords', 'inventoryLocks', 'auditLogs', 'exchangeRecords', 'purchaseReturns',
-    'notifications'
+    'notifications', 'warehouseLocations', 'stockOutRecords', 'warehouseTransfers', 'stocktakes'
   ];
   collections.forEach(k => {
     if (!Array.isArray(obj[k])) obj[k] = [];
@@ -247,16 +251,44 @@ function listBackups() {
 
 let data = loadData();
 
+// ===== 仓库/条码种子与回填：仅缺失时执行一次 =====
+function seedWarehouseData() {
+  try {
+    let changed = false;
+    // 产品条码回填：无条码的产品赋 'P'+id（唯一、Code128 兼容）
+    (data.products || []).forEach(p => {
+      if (!p.barcode) { p.barcode = 'P' + String(p.id); changed = true; }
+    });
+    // 仓位示例：每个启用仓库生成 2 个仓位
+    if ((data.warehouseLocations || []).length === 0) {
+      (data.warehouses || []).forEach((w, idx) => {
+        if (w.isActive === false) return;
+        const prefix = String.fromCharCode(65 + idx);
+        data.warehouseLocations.push(
+          { id: generateId(), warehouseId: w.id, warehouse: w.name, name: prefix + '001', isDefault: idx === 0, status: '启用', creator: '系统', createTime: new Date().toLocaleString('zh-CN'), createdAt: new Date().toISOString() },
+          { id: generateId(), warehouseId: w.id, warehouse: w.name, name: prefix + '002', isDefault: false, status: '启用', creator: '系统', createTime: new Date().toLocaleString('zh-CN'), createdAt: new Date().toISOString() }
+        );
+      });
+      changed = true;
+    }
+    if (changed) saveData();
+  } catch (e) {
+    console.error('仓库/条码种子数据初始化失败:', e);
+  }
+}
+seedWarehouseData();
+
 function generateId() {
   return Date.now().toString(36) + Math.random().toString(36).substr(2);
 }
 
-// ===== 订单号防重复生成：按当天已有最大序号递增，避免并发重复 =====
-function generateOrderNo(prefix, collection) {
+// ===== 单号防重复生成：按当天已有最大序号递增，避免并发重复 =====
+function generateOrderNo(prefix, collection, field) {
   const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+  const key = field || 'orderNo';
   let maxSeq = 0;
   (collection || []).forEach(o => {
-    const no = String(o.orderNo || '');
+    const no = String(o[key] || '');
     if (no.startsWith(prefix + today)) {
       const seq = parseInt(no.slice(prefix.length + 8), 10) || 0;
       if (seq > maxSeq) maxSeq = seq;
@@ -473,15 +505,21 @@ app.get('/api/data', (req, res) => {
 });
 
 app.get('/api/products', (req, res) => {
+  if (req.query.barcode) {
+    const bc = String(req.query.barcode).trim();
+    return res.json((data.products || []).filter(p => String(p.barcode || '') === bc));
+  }
   res.json(data.products);
 });
 
 app.post('/api/products', requirePerm('资料管理', '产品资料', '添加'), (req, res) => {
-  const allowed = { name: 'string', model: 'string', type: 'string', color: 'string', spec: 'string', tabletopColor: 'string', unit: 'string', packageCount: true, price: true, cost: true, stock: true, warehouse: 'string', minStock: true, sku: 'string', description: 'string', image: 'string', category: 'string', brand: 'string', remark: 'string' };
+  const allowed = { name: 'string', model: 'string', type: 'string', color: 'string', spec: 'string', tabletopColor: 'string', unit: 'string', packageCount: true, price: true, cost: true, stock: true, warehouse: 'string', minStock: true, sku: 'string', description: 'string', image: 'string', category: 'string', brand: 'string', remark: 'string', barcode: 'string' };
   const product = {
     id: req.body.id || generateId(),
     ...pick(req.body, allowed)
   };
+  // 缺省生成唯一条码（Code128 兼容）
+  if (!product.barcode) product.barcode = 'P' + String(product.id);
   console.log('创建新产品:', product);
   data.products.push(product);
   saveData();
@@ -494,7 +532,7 @@ app.put('/api/products/:id', requirePerm('资料管理', '产品资料', '编辑
   const index = data.products.findIndex(p => String(p.id) === String(req.params.id));
   console.log('找到的索引:', index);
   if (index !== -1) {
-    const allowed = { name: 'string', model: 'string', type: 'string', color: 'string', spec: 'string', tabletopColor: 'string', unit: 'string', packageCount: true, price: true, cost: true, stock: true, warehouse: 'string', minStock: true, sku: 'string', description: 'string', image: 'string', category: 'string', brand: 'string', remark: 'string' };
+    const allowed = { name: 'string', model: 'string', type: 'string', color: 'string', spec: 'string', tabletopColor: 'string', unit: 'string', packageCount: true, price: true, cost: true, stock: true, warehouse: 'string', minStock: true, sku: 'string', description: 'string', image: 'string', category: 'string', brand: 'string', remark: 'string', barcode: 'string' };
     data.products[index] = {
       ...data.products[index],
       ...pick(req.body, allowed)
@@ -1635,6 +1673,268 @@ app.delete('/api/warehouses/:id', (req, res) => {
   } else {
     res.status(404).json({ error: 'Warehouse not found' });
   }
+});
+
+// ==================== 仓位管理 API ====================
+app.get('/api/warehouse-locations', (req, res) => {
+  res.json(data.warehouseLocations || []);
+});
+
+app.post('/api/warehouse-locations', requirePerm('库存管理', '仓位', '添加'), (req, res) => {
+  const name = String(req.body.name || '').trim();
+  if (!name) return res.status(400).json({ error: '仓位名称不能为空' });
+  let warehouse = null;
+  if (req.body.warehouseId) {
+    warehouse = (data.warehouses || []).find(w => String(w.id) === String(req.body.warehouseId));
+  }
+  if (!warehouse && req.body.warehouse) {
+    warehouse = (data.warehouses || []).find(w => w.name === String(req.body.warehouse));
+  }
+  if (!warehouse) {
+    warehouse = (data.warehouses || []).find(w => w.isDefault !== false) || (data.warehouses || [])[0] || null;
+  }
+  const loc = {
+    id: generateId(),
+    warehouseId: warehouse ? warehouse.id : '',
+    warehouse: warehouse ? warehouse.name : '主仓库',
+    name,
+    isDefault: req.body.isDefault === true || req.body.isDefault === 'true',
+    status: String(req.body.status || '启用'),
+    remark: String(req.body.remark || ''),
+    creator: req.user && (req.user.name || req.user.username) || '系统',
+    createTime: new Date().toLocaleString('zh-CN'),
+    createdAt: new Date().toISOString()
+  };
+  data.warehouseLocations.push(loc);
+  saveData();
+  logAudit('仓位添加', `新增仓位 ${loc.name}（${loc.warehouse}）`, req.user && req.user.name);
+  res.json(loc);
+});
+
+app.put('/api/warehouse-locations/:id', requirePerm('库存管理', '仓位', '编辑'), (req, res) => {
+  const idx = (data.warehouseLocations || []).findIndex(l => String(l.id) === String(req.params.id));
+  if (idx === -1) return res.status(404).json({ error: '仓位不存在' });
+  const old = data.warehouseLocations[idx];
+  const updated = {
+    ...old,
+    ...pick(req.body, { name: 'string', warehouseId: 'string', warehouse: 'string', isDefault: true, status: 'string', remark: 'string' })
+  };
+  if (req.body.warehouseId) {
+    const wh = (data.warehouses || []).find(w => String(w.id) === String(req.body.warehouseId));
+    if (wh) { updated.warehouseId = wh.id; updated.warehouse = wh.name; }
+  }
+  updated.modifier = req.user && (req.user.name || req.user.username) || '系统';
+  updated.modifyTime = new Date().toLocaleString('zh-CN');
+  updated.updatedAt = new Date().toISOString();
+  data.warehouseLocations[idx] = updated;
+  saveData();
+  logAudit('仓位编辑', `编辑仓位 ${updated.name}`, req.user && req.user.name);
+  res.json(updated);
+});
+
+app.delete('/api/warehouse-locations/:id', requirePerm('库存管理', '仓位', '删除'), (req, res) => {
+  const idx = (data.warehouseLocations || []).findIndex(l => String(l.id) === String(req.params.id));
+  if (idx === -1) return res.status(404).json({ error: '仓位不存在' });
+  const deleted = data.warehouseLocations.splice(idx, 1)[0];
+  saveData();
+  logAudit('仓位删除', `删除仓位 ${deleted.name}`, req.user && req.user.name);
+  res.json(deleted);
+});
+
+// ==================== 仓库调拨/移库 API ====================
+app.get('/api/warehouse-transfers', (req, res) => {
+  res.json(data.warehouseTransfers || []);
+});
+
+app.post('/api/warehouse-transfers', requirePerm('库存管理', '调拨', '调拨'), (req, res) => {
+  const productId = String(req.body.productId || req.body.product_id || '');
+  const qty = Number(req.body.quantity);
+  const fromWarehouse = String(req.body.fromWarehouse || '');
+  const toWarehouse = String(req.body.toWarehouse || '');
+  if (!productId) return res.status(400).json({ error: '请选择产品' });
+  if (!(qty > 0)) return res.status(400).json({ error: '调拨数量必须大于 0' });
+  if (!fromWarehouse || !toWarehouse) return res.status(400).json({ error: '请选择源仓库和目标仓库' });
+  if (fromWarehouse === toWarehouse) return res.status(400).json({ error: '源仓库与目标仓库不能相同' });
+  const product = (data.products || []).find(p => String(p.id) === String(productId));
+  if (!product) return res.status(404).json({ error: '产品不存在' });
+  const whNames = (data.warehouses || []).map(w => w.name);
+  if (!whNames.includes(fromWarehouse)) return res.status(400).json({ error: '源仓库不存在: ' + fromWarehouse });
+  if (!whNames.includes(toWarehouse)) return res.status(400).json({ error: '目标仓库不存在: ' + toWarehouse });
+  const fromInv = (data.inventory || []).find(i => String(i.productId) === String(productId) && i.warehouse === fromWarehouse);
+  if (!fromInv) return res.status(400).json({ error: '源仓库无该产品库存' });
+  if (Number(fromInv.quantity) < qty) return res.status(400).json({ error: '库存不足，当前库存 ' + fromInv.quantity });
+  // 扣源仓
+  fromInv.quantity = Number(fromInv.quantity) - qty;
+  // 加目标仓（无则新建库存行）
+  const toInv = (data.inventory || []).find(i => String(i.productId) === String(productId) && i.warehouse === toWarehouse);
+  if (toInv) {
+    toInv.quantity = Number(toInv.quantity) + qty;
+  } else {
+    data.inventory.push({
+      id: generateId(), productId, productName: product.name || '', quantity: qty, minStock: 0, warehouse: toWarehouse
+    });
+  }
+  const transfer = {
+    id: generateId(),
+    transferNo: generateOrderNo('DB', data.warehouseTransfers, 'transferNo'),
+    productId,
+    productName: product.name || '',
+    productModel: product.model || '',
+    quantity: qty,
+    fromWarehouse,
+    toWarehouse,
+    fromLocation: String(req.body.fromLocation || ''),
+    toLocation: String(req.body.toLocation || ''),
+    type: String(req.body.type || '调拨'),
+    operator: req.user && (req.user.name || req.user.username) || '系统',
+    remark: String(req.body.remark || ''),
+    createdAt: new Date().toISOString()
+  };
+  data.warehouseTransfers.push(transfer);
+  // 同步生成出库记录
+  data.stockOutRecords.push({
+    id: generateId(),
+    stockOutNo: generateOrderNo('CK', data.stockOutRecords, 'stockOutNo'),
+    productId,
+    productName: product.name || '',
+    productModel: product.model || '',
+    quantity: qty,
+    warehouse: fromWarehouse,
+    location: String(req.body.fromLocation || ''),
+    type: '调拨出库',
+    targetWarehouse: toWarehouse,
+    color: product.color || '',
+    spec: product.spec || '',
+    unit: product.unit || '',
+    remark: String(req.body.remark || ''),
+    operator: req.user && (req.user.name || req.user.username) || '系统',
+    createdAt: new Date().toISOString()
+  });
+  saveData();
+  logAudit('仓库调拨', `产品 ${product.name} 从 ${fromWarehouse} 调拨 ${qty} 至 ${toWarehouse}`, req.user && req.user.name);
+  res.json(transfer);
+});
+
+// ==================== 出库记录 API ====================
+app.get('/api/stock-out-records', (req, res) => {
+  res.json(data.stockOutRecords || []);
+});
+
+app.post('/api/stock-out-records', requirePerm('库存管理', '扫码出入库', '出库'), (req, res) => {
+  const productId = String(req.body.productId || req.body.product_id || '');
+  const qty = Number(req.body.quantity);
+  if (!productId) return res.status(400).json({ error: '请选择产品' });
+  if (!(qty > 0)) return res.status(400).json({ error: '出库数量必须大于 0' });
+  const product = (data.products || []).find(p => String(p.id) === String(productId));
+  if (!product) return res.status(404).json({ error: '产品不存在' });
+  const warehouse = String(req.body.warehouse || '');
+  // 若有对应库存行则校验并扣减
+  const matchedInv = warehouse
+    ? (data.inventory || []).find(i => String(i.productId) === String(productId) && i.warehouse === warehouse)
+    : null;
+  if (matchedInv) {
+    if (Number(matchedInv.quantity) < qty) return res.status(400).json({ error: '库存不足，当前库存 ' + matchedInv.quantity });
+    matchedInv.quantity = Number(matchedInv.quantity) - qty;
+  }
+  // 总库存兜底扣减
+  product.stock = Math.max(0, (Number(product.stock) || 0) - qty);
+  const record = {
+    id: generateId(),
+    stockOutNo: generateOrderNo('CK', data.stockOutRecords, 'stockOutNo'),
+    productId,
+    productName: product.name || '',
+    productModel: product.model || '',
+    quantity: qty,
+    warehouse: warehouse || product.warehouse || '',
+    location: String(req.body.location || ''),
+    type: String(req.body.type || '出库'),
+    targetWarehouse: String(req.body.targetWarehouse || ''),
+    color: product.color || '',
+    spec: product.spec || '',
+    unit: product.unit || '',
+    remark: String(req.body.remark || ''),
+    operator: req.user && (req.user.name || req.user.username) || '系统',
+    createdAt: new Date().toISOString()
+  };
+  data.stockOutRecords.push(record);
+  saveData();
+  logAudit('库存出库', `产品 ${product.name} 出库 ${qty}（${record.warehouse}）`, req.user && req.user.name);
+  res.json(record);
+});
+
+// ==================== 盘点 API ====================
+app.get('/api/stocktakes', (req, res) => {
+  res.json(data.stocktakes || []);
+});
+
+app.get('/api/stocktakes/:id', (req, res) => {
+  const st = (data.stocktakes || []).find(t => String(t.id) === String(req.params.id));
+  if (!st) return res.status(404).json({ error: '盘点记录不存在' });
+  res.json(st);
+});
+
+app.post('/api/stocktakes', requirePerm('库存管理', '盘点', '盘点'), (req, res) => {
+  const productId = String(req.body.productId || req.body.product_id || '');
+  const countedQty = Number(req.body.countedQty !== undefined ? req.body.countedQty : req.body.countedQuantity);
+  if (!productId) return res.status(400).json({ error: '请选择产品' });
+  if (!(countedQty >= 0)) return res.status(400).json({ error: '盘点数量不能为负数' });
+  const product = (data.products || []).find(p => String(p.id) === String(productId));
+  if (!product) return res.status(404).json({ error: '产品不存在' });
+  const warehouse = String(req.body.warehouse || '');
+  const inv = (data.inventory || []).find(i => String(i.productId) === String(productId) && (!warehouse || i.warehouse === warehouse));
+  const currentQty = inv ? Number(inv.quantity) : 0;
+  const diff = countedQty - currentQty;
+  if (inv) {
+    inv.quantity = countedQty;
+  } else if (countedQty > 0) {
+    data.inventory.push({ id: generateId(), productId, productName: product.name || '', quantity: countedQty, minStock: 0, warehouse: warehouse || product.warehouse || '主仓库' });
+  }
+  product.stock = Math.max(0, (Number(product.stock) || 0) + diff);
+  const record = {
+    id: generateId(),
+    stocktakeNo: generateOrderNo('PD', data.stocktakes, 'stocktakeNo'),
+    productId,
+    productName: product.name || '',
+    productModel: product.model || '',
+    warehouse: warehouse || (inv && inv.warehouse) || product.warehouse || '',
+    currentQty,
+    countedQty,
+    diff,
+    status: 'done',
+    operator: req.user && (req.user.name || req.user.username) || '系统',
+    remark: String(req.body.remark || ''),
+    createdAt: new Date().toISOString()
+  };
+  data.stocktakes.push(record);
+  saveData();
+  logAudit('库存盘点', `产品 ${product.name} 盘点 ${currentQty} → ${countedQty}（差异 ${diff}）`, req.user && req.user.name);
+  res.json(record);
+});
+
+// ==================== 条码 API ====================
+app.post('/api/products/:id/barcode', requirePerm('库存管理', '条码', '生成'), (req, res) => {
+  const product = (data.products || []).find(p => String(p.id) === String(req.params.id));
+  if (!product) return res.status(404).json({ error: 'Product not found' });
+  let code = req.body.barcode !== undefined ? String(req.body.barcode).trim() : '';
+  if (code) {
+    if (!/^[\x20-\x7E]+$/.test(code)) return res.status(400).json({ error: '条码仅支持可打印 ASCII 字符' });
+    const dup = (data.products || []).find(p => String(p.id) !== String(product.id) && String(p.barcode || '') === code);
+    if (dup) return res.status(400).json({ error: '条码已被其他产品占用' });
+    product.barcode = code;
+  } else {
+    product.barcode = 'P' + String(product.id);
+  }
+  saveData();
+  logAudit('条码生成', `产品 ${product.name} 生成条码 ${product.barcode}`, req.user && req.user.name);
+  res.json({ success: true, barcode: product.barcode, product });
+});
+
+app.get('/api/barcode/:code', (req, res) => {
+  const code = String(req.params.code || '').trim();
+  const product = (data.products || []).find(p => String(p.barcode || '') === code);
+  if (!product) return res.status(404).json({ error: '未找到该条码对应的产品' });
+  const inventory = (data.inventory || []).filter(i => String(i.productId) === String(product.id));
+  res.json({ product, inventory });
 });
 
 app.post('/api/finance-records', (req, res) => {

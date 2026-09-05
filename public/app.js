@@ -200,8 +200,13 @@ const SUBMENU_ITEM_MAP = {
     '采购订单': ['创建采购单', '采购单列表', '采购单导入']
   },
   '库存管理': {
-    '库存查询': ['产品库存查询', '产品出入库查询', '库存统计', '盘点库存清单', '打印产品库存标签', '材料库存查询', '材料入库凭证查询', '材料出库凭证查询'],
-    '库存调整': ['手动入库', '批量导入', '材料领用', '按订单领料', '领料单查询', '材料移库', '变更凭证查询']
+    '库存查询': ['产品库存查询', '产品出入库查询', '库存统计', '材料库存查询', '材料入库凭证查询', '材料出库凭证查询'],
+    '库存调整': ['手动入库', '批量导入', '材料领用', '按订单领料', '领料单查询', '变更凭证查询'],
+    '仓位': ['仓位清单'],
+    '调拨': ['材料移库', '仓库调拨'],
+    '盘点': ['盘点库存清单'],
+    '条码': ['打印产品库存标签'],
+    '扫码出入库': ['扫码查询', '扫码出入库']
   },
   '财务管理': {
     '财务报表': ['客户预收款', '预收款退款', '预收款查询', '预收款退款查询', '按单收款', '月结收款', '按客户收款', '收款查询', '按单退款', '退款查询', '采购预付款', '预付款查询', '按单付款', '月结付款', '采购付款查询', '费用单', '费用单查询', '其他收入', '其他收入查询', '内部转账', '内部转账查询', '管理成本', '订单利润', '员工工资', '工资增减项', '公司资金账户', '客户资金账户', '供应商资金账户']
@@ -1656,7 +1661,7 @@ function getSupplierName(id) {
 async function fetchData() {
   // console.log('fetchData started - loading all data from backend database');
   try {
-    const [products, inventory, customers, suppliers, salesOrders, purchaseOrders, financeRecords, users, roles, stockInRecords, planOrders, processes] = await Promise.all([
+    const [products, inventory, customers, suppliers, salesOrders, purchaseOrders, financeRecords, users, roles, stockInRecords, planOrders, processes, warehouseLocations, stockOutRecords, warehouseTransfers, stocktakes] = await Promise.all([
       fetch('/api/products').then(r => r.json()),
       fetch('/api/inventory').then(r => r.json()),
       fetch('/api/customers').then(r => r.json()),
@@ -1668,22 +1673,18 @@ async function fetchData() {
       fetch('/api/roles').then(r => r.json()),
       fetch('/api/stock-in-records').then(r => r.json()),
       fetch('/api/plan-orders').then(r => r.json()),
-      fetch('/api/processes').then(r => r.json())
+      fetch('/api/processes').then(r => r.json()),
+      fetch('/api/warehouse-locations').then(r => r.json()),
+      fetch('/api/stock-out-records').then(r => r.json()),
+      fetch('/api/warehouse-transfers').then(r => r.json()),
+      fetch('/api/stocktakes').then(r => r.json())
     ]);
     
-    // console.log('Data loaded from backend:');
-    // console.log('  - Products:', products.length);
-    // console.log('  - Inventory:', inventory.length);
-    // console.log('  - Customers:', customers.length);
-    // console.log('  - Suppliers:', suppliers.length);
-    // console.log('  - Sales Orders:', salesOrders.length);
-    // console.log('  - Purchase Orders:', purchaseOrders.length);
-    // console.log('  - Finance Records:', financeRecords.length);
-    // console.log('  - Users:', users.length);
-    // console.log('  - Roles:', roles.length);
-    // console.log('  - Stock In Records:', stockInRecords.length);
+    data = { products, inventory, customers, suppliers, salesOrders, purchaseOrders, financeRecords, users, roles, stockRecords: [], stockInRecords, planOrders, processes, warehouseLocations, stockOutRecords, warehouseTransfers, stocktakes };
     
-    data = { products, inventory, customers, suppliers, salesOrders, purchaseOrders, financeRecords, users, roles, stockRecords: [], stockInRecords, planOrders, processes };
+    // 仓位数据已上后端：本地变量同步后端集合（迁移旧的 localStorage 仓位）
+    locationData = Array.isArray(warehouseLocations) ? warehouseLocations : [];
+    migrateLocalStorageLocations();
     
     // 从 localStorage 加载其他数据（planOrders 始终从后端 API 加载）
     const savedErpData = localStorage.getItem('erpData');
@@ -8386,6 +8387,504 @@ async function switchInventoryTab(tab) {
     case 'product-stock-in-list': await renderProductStockInList(); break;
     case 'material-stock': renderInventoryMaterial(); break;
     case 'material-change': renderInventoryChange(); break;
+    case 'product-check': renderStocktake(); break;
+    case 'product-label': renderBarcodeLabel(); break;
+    case 'material-transfer': renderWarehouseTransfer(); break;
+    case 'scan-query': renderScanQuery(); break;
+    case 'scan-inout': renderScanInOut(); break;
+  }
+}
+
+// ==================== 仓库调拨 / 移库 ====================
+async function renderWarehouseTransfer() {
+  document.getElementById('page-title').textContent = '仓库调拨 / 移库';
+  document.getElementById('page-subtitle').textContent = '将产品从源仓库调拨到目标仓库';
+  
+  if (!warehouseData || warehouseData.length === 0) { try { await fetchWarehouses(); } catch (e) {} }
+  const productOptions = (data.products || []).map(p =>
+    `<option value="${esc(String(p.id))}">${esc(p.name || p.model || p.id)}${p.barcode ? '（' + esc(p.barcode) + '）' : ''}</option>`
+  ).join('');
+  const whOptions = (warehouseData || []).map(w => `<option value="${esc(w.name)}">${esc(w.name)}</option>`).join('') || '<option value="主仓库">主仓库</option>';
+  const locOptions = locationData.map(l => `<option value="${esc(String(l.name))}">${esc(l.name)}</option>`).join('');
+  
+  const container = document.getElementById('page-content');
+  if (!container) return;
+  container.innerHTML = `
+    <div class="fade-in text-xs">
+      <div class="bg-white border border-slate-200 rounded-lg p-4 mb-4">
+        <div class="grid grid-cols-2 md:grid-cols-3 gap-3 mb-3">
+          <div><label class="block text-xs text-slate-500 mb-1">产品</label><select id="wt_productId" class="w-full px-2 py-1.5 border border-slate-200 rounded text-sm">${productOptions}</select></div>
+          <div><label class="block text-xs text-slate-500 mb-1">数量</label><input id="wt_quantity" type="number" min="1" class="w-full px-2 py-1.5 border border-slate-200 rounded text-sm" placeholder="调拨数量"></div>
+          <div><label class="block text-xs text-slate-500 mb-1">源仓库</label><select id="wt_from" class="w-full px-2 py-1.5 border border-slate-200 rounded text-sm">${whOptions}</select></div>
+          <div><label class="block text-xs text-slate-500 mb-1">目标仓库</label><select id="wt_to" class="w-full px-2 py-1.5 border border-slate-200 rounded text-sm">${whOptions}</select></div>
+          <div><label class="block text-xs text-slate-500 mb-1">源仓位</label><select id="wt_fromLocation" class="w-full px-2 py-1.5 border border-slate-200 rounded text-sm"><option value="">不限</option>${locOptions}</select></div>
+          <div><label class="block text-xs text-slate-500 mb-1">目标仓位</label><select id="wt_toLocation" class="w-full px-2 py-1.5 border border-slate-200 rounded text-sm"><option value="">不限</option>${locOptions}</select></div>
+          <div class="col-span-2"><label class="block text-xs text-slate-500 mb-1">备注</label><input id="wt_remark" type="text" class="w-full px-2 py-1.5 border border-slate-200 rounded text-sm" placeholder="选填"></div>
+        </div>
+        <button onclick="submitWarehouseTransfer()" class="px-4 py-2 bg-teal-500 text-white rounded text-xs hover:bg-teal-600" data-perm="库存管理-调拨-调拨">确认调拨</button>
+      </div>
+      <div class="bg-white border border-slate-200 rounded-lg overflow-hidden">
+        <div class="px-4 py-3 border-b border-slate-200 font-medium text-slate-700">调拨记录</div>
+        <table class="w-full">
+          <thead class="bg-slate-50"><tr>
+            <th class="px-3 py-2 text-left text-xs text-slate-600">调拨单号</th>
+            <th class="px-3 py-2 text-left text-xs text-slate-600">产品</th>
+            <th class="px-3 py-2 text-left text-xs text-slate-600">数量</th>
+            <th class="px-3 py-2 text-left text-xs text-slate-600">源仓库</th>
+            <th class="px-3 py-2 text-left text-xs text-slate-600">目标仓库</th>
+            <th class="px-3 py-2 text-left text-xs text-slate-600">操作人</th>
+            <th class="px-3 py-2 text-left text-xs text-slate-600">时间</th>
+          </tr></thead>
+          <tbody class="divide-y divide-slate-100">
+            ${(data.warehouseTransfers || []).slice().reverse().slice(0, 20).map(t => `
+              <tr class="hover:bg-slate-50">
+                <td class="px-3 py-2 text-xs text-slate-600">${esc(t.transferNo || '-')}</td>
+                <td class="px-3 py-2 text-xs text-slate-800">${esc(t.productName || '-')}</td>
+                <td class="px-3 py-2 text-xs text-slate-600">${t.quantity}</td>
+                <td class="px-3 py-2 text-xs text-slate-600">${esc(t.fromWarehouse)}</td>
+                <td class="px-3 py-2 text-xs text-slate-600">${esc(t.toWarehouse)}</td>
+                <td class="px-3 py-2 text-xs text-slate-600">${esc(t.operator || '-')}</td>
+                <td class="px-3 py-2 text-xs text-slate-400">${(t.createdAt || '').slice(0, 16).replace('T', ' ')}</td>
+              </tr>`).join('') || '<tr><td colspan="7" class="px-3 py-4 text-center text-xs text-slate-400">暂无调拨记录</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
+async function submitWarehouseTransfer() {
+  const productId = document.getElementById('wt_productId').value;
+  const quantity = Number(document.getElementById('wt_quantity').value);
+  const fromWarehouse = document.getElementById('wt_from').value;
+  const toWarehouse = document.getElementById('wt_to').value;
+  const fromLocation = document.getElementById('wt_fromLocation').value;
+  const toLocation = document.getElementById('wt_toLocation').value;
+  const remark = document.getElementById('wt_remark').value.trim();
+  if (!productId) { showAlertModal('提示', '请选择产品'); return; }
+  if (!(quantity > 0)) { showAlertModal('提示', '数量必须为正数'); return; }
+  if (!fromWarehouse || !toWarehouse) { showAlertModal('提示', '请选择源仓库和目标仓库'); return; }
+  if (fromWarehouse === toWarehouse) { showAlertModal('提示', '源仓库与目标仓库不能相同'); return; }
+  try {
+    const resp = await fetch('/api/warehouse-transfers', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ productId, quantity, fromWarehouse, toWarehouse, fromLocation, toLocation, remark, type: '调拨' })
+    });
+    const result = await resp.json();
+    if (!resp.ok) { showAlertModal('提示', result.error || '调拨失败'); return; }
+    showSuccessModal('调拨成功');
+    await fetchData();
+    renderWarehouseTransfer();
+  } catch (e) {
+    showAlertModal('错误', '调拨失败：' + e.message);
+  }
+}
+
+// ==================== 盘点 ====================
+async function renderStocktake() {
+  document.getElementById('page-title').textContent = '盘点库存清单';
+  document.getElementById('page-subtitle').textContent = '按实际数量盘点并自动调整库存';
+  
+  if (!warehouseData || warehouseData.length === 0) { try { await fetchWarehouses(); } catch (e) {} }
+  const productOptions = (data.products || []).map(p =>
+    `<option value="${esc(String(p.id))}">${esc(p.name || p.model || p.id)}</option>`
+  ).join('');
+  const whOptions = '<option value="">不限</option>' + (warehouseData || []).map(w => `<option value="${esc(w.name)}">${esc(w.name)}</option>`).join('');
+  
+  const container = document.getElementById('page-content');
+  if (!container) return;
+  container.innerHTML = `
+    <div class="fade-in text-xs">
+      <div class="bg-white border border-slate-200 rounded-lg p-4 mb-4">
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+          <div><label class="block text-xs text-slate-500 mb-1">产品</label><select id="st_productId" class="w-full px-2 py-1.5 border border-slate-200 rounded text-sm">${productOptions}</select></div>
+          <div><label class="block text-xs text-slate-500 mb-1">仓库</label><select id="st_warehouse" class="w-full px-2 py-1.5 border border-slate-200 rounded text-sm">${whOptions}</select></div>
+          <div><label class="block text-xs text-slate-500 mb-1">盘点数量</label><input id="st_counted" type="number" min="0" class="w-full px-2 py-1.5 border border-slate-200 rounded text-sm" placeholder="实际盘点数量"></div>
+          <div><label class="block text-xs text-slate-500 mb-1">备注</label><input id="st_remark" type="text" class="w-full px-2 py-1.5 border border-slate-200 rounded text-sm" placeholder="选填"></div>
+        </div>
+        <button onclick="submitStocktake()" class="px-4 py-2 bg-teal-500 text-white rounded text-xs hover:bg-teal-600" data-perm="库存管理-盘点-盘点">提交盘点</button>
+      </div>
+      <div class="bg-white border border-slate-200 rounded-lg overflow-hidden">
+        <div class="px-4 py-3 border-b border-slate-200 font-medium text-slate-700">盘点记录</div>
+        <table class="w-full">
+          <thead class="bg-slate-50"><tr>
+            <th class="px-3 py-2 text-left text-xs text-slate-600">盘点单号</th>
+            <th class="px-3 py-2 text-left text-xs text-slate-600">产品</th>
+            <th class="px-3 py-2 text-left text-xs text-slate-600">仓库</th>
+            <th class="px-3 py-2 text-left text-xs text-slate-600">账面数量</th>
+            <th class="px-3 py-2 text-left text-xs text-slate-600">盘点数量</th>
+            <th class="px-3 py-2 text-left text-xs text-slate-600">差异</th>
+            <th class="px-3 py-2 text-left text-xs text-slate-600">操作人</th>
+            <th class="px-3 py-2 text-left text-xs text-slate-600">时间</th>
+          </tr></thead>
+          <tbody class="divide-y divide-slate-100">
+            ${(data.stocktakes || []).slice().reverse().slice(0, 20).map(t => `
+              <tr class="hover:bg-slate-50">
+                <td class="px-3 py-2 text-xs text-slate-600">${esc(t.stocktakeNo || '-')}</td>
+                <td class="px-3 py-2 text-xs text-slate-800">${esc(t.productName || '-')}</td>
+                <td class="px-3 py-2 text-xs text-slate-600">${esc(t.warehouse || '-')}</td>
+                <td class="px-3 py-2 text-xs text-slate-600">${t.currentQty}</td>
+                <td class="px-3 py-2 text-xs text-slate-600">${t.countedQty}</td>
+                <td class="px-3 py-2 text-xs font-medium ${Number(t.diff) > 0 ? 'text-green-600' : Number(t.diff) < 0 ? 'text-red-500' : 'text-slate-600'}">${Number(t.diff) > 0 ? '+' : ''}${t.diff}</td>
+                <td class="px-3 py-2 text-xs text-slate-600">${esc(t.operator || '-')}</td>
+                <td class="px-3 py-2 text-xs text-slate-400">${(t.createdAt || '').slice(0, 16).replace('T', ' ')}</td>
+              </tr>`).join('') || '<tr><td colspan="8" class="px-3 py-4 text-center text-xs text-slate-400">暂无盘点记录</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
+async function submitStocktake() {
+  const productId = document.getElementById('st_productId').value;
+  const warehouse = document.getElementById('st_warehouse').value;
+  const countedQty = Number(document.getElementById('st_counted').value);
+  const remark = document.getElementById('st_remark').value.trim();
+  if (!productId) { showAlertModal('提示', '请选择产品'); return; }
+  if (isNaN(countedQty) || countedQty < 0) { showAlertModal('提示', '盘点数量不能为负数'); return; }
+  try {
+    const resp = await fetch('/api/stocktakes', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ productId, warehouse, countedQty, remark })
+    });
+    const result = await resp.json();
+    if (!resp.ok) { showAlertModal('提示', result.error || '盘点失败'); return; }
+    showSuccessModal('盘点成功，库存已调整');
+    await fetchData();
+    renderStocktake();
+  } catch (e) {
+    showAlertModal('错误', '盘点失败：' + e.message);
+  }
+}
+
+// ==================== 条码标签打印 ====================
+async function renderBarcodeLabel() {
+  document.getElementById('page-title').textContent = '打印产品库存标签';
+  document.getElementById('page-subtitle').textContent = '为产品生成条码并打印库存标签';
+  
+  const container = document.getElementById('page-content');
+  if (!container) return;
+  container.innerHTML = `
+    <div class="fade-in text-xs">
+      <div class="bg-white border border-slate-200 rounded-lg overflow-hidden">
+        <table class="w-full">
+          <thead class="bg-slate-50"><tr>
+            <th class="px-3 py-2 text-left text-xs text-slate-600">产品名称</th>
+            <th class="px-3 py-2 text-left text-xs text-slate-600">型号</th>
+            <th class="px-3 py-2 text-left text-xs text-slate-600">规格</th>
+            <th class="px-3 py-2 text-left text-xs text-slate-600">仓库</th>
+            <th class="px-3 py-2 text-left text-xs text-slate-600">当前库存</th>
+            <th class="px-3 py-2 text-left text-xs text-slate-600">条码</th>
+            <th class="px-3 py-2 text-left text-xs text-slate-600">操作</th>
+          </tr></thead>
+          <tbody class="divide-y divide-slate-100">
+            ${(data.products || []).map(p => `
+              <tr class="hover:bg-slate-50">
+                <td class="px-3 py-2 text-xs text-slate-800">${esc(p.name || p.type || '-')}</td>
+                <td class="px-3 py-2 text-xs text-slate-600">${esc(p.model || p.sku || '-')}</td>
+                <td class="px-3 py-2 text-xs text-slate-600">${esc(p.spec || '-')}</td>
+                <td class="px-3 py-2 text-xs text-slate-600">${esc(p.warehouse || '-')}</td>
+                <td class="px-3 py-2 text-xs text-slate-600">${p.stock || 0}</td>
+                <td class="px-3 py-2 text-xs text-slate-600 font-mono">${esc(p.barcode || '-')}</td>
+                <td class="px-3 py-2 text-xs">
+                  <button onclick="generateProductBarcode('${esc(String(p.id))}')" class="px-2 py-1 bg-blue-500 text-white rounded hover:bg-blue-600" data-perm="库存管理-条码-生成">生成条码</button>
+                  <button onclick="openBarcodePrint('${esc(String(p.id))}')" class="px-2 py-1 bg-teal-500 text-white rounded hover:bg-teal-600 ml-1" data-perm="库存管理-条码-打印">打印标签</button>
+                </td>
+              </tr>`).join('') || '<tr><td colspan="7" class="px-3 py-4 text-center text-xs text-slate-400">暂无产品</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div id="barcode-print-mount"></div>
+  `;
+}
+
+async function generateProductBarcode(id) {
+  try {
+    const resp = await fetch('/api/products/' + encodeURIComponent(id) + '/barcode', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({})
+    });
+    const result = await resp.json();
+    if (!resp.ok) { showAlertModal('提示', result.error || '生成失败'); return; }
+    showSuccessModal('条码已生成：' + result.barcode);
+    await fetchData();
+    renderBarcodeLabel();
+  } catch (e) {
+    showAlertModal('错误', '生成失败：' + e.message);
+  }
+}
+
+async function openBarcodePrint(id) {
+  const p = (data.products || []).find(x => String(x.id) === String(id));
+  if (!p) return;
+  const code = p.barcode || 'P' + String(p.id);
+  const mount = document.getElementById('barcode-print-mount');
+  if (!mount) return;
+  mount.innerHTML = `
+    <div id="barcode-print-modal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+      <div class="bg-white rounded-xl shadow-xl w-full max-w-sm mx-4 p-6">
+        <div id="barcode-print-area" class="text-center">
+          <div class="text-sm font-semibold text-slate-800 mb-1">${esc(p.name || p.type || '')}</div>
+          <div class="text-xs text-slate-500 mb-2">型号：${esc(p.model || '-')}　仓库：${esc(p.warehouse || '-')}　单位：${esc(p.unit || '-')}</div>
+          <svg id="barcodeSvg"></svg>
+        </div>
+        <div class="flex justify-end gap-3 mt-4">
+          <button onclick="document.getElementById('barcode-print-modal').remove()" class="px-4 py-2 border border-slate-300 rounded text-xs hover:bg-slate-50">关闭</button>
+          <button onclick="printBarcodeLabel()" class="px-4 py-2 bg-teal-500 text-white rounded text-xs hover:bg-teal-600">打印</button>
+        </div>
+      </div>
+    </div>
+  `;
+  if (typeof JsBarcode !== 'undefined') {
+    try {
+      JsBarcode('#barcodeSvg', code, { format: 'CODE128', width: 2, height: 60, displayValue: true, fontSize: 14, margin: 4 });
+    } catch (e) { console.error('条码渲染失败:', e); }
+  } else {
+    document.getElementById('barcode-print-area').insertAdjacentHTML('beforeend', `<div class="text-xs text-slate-400 mt-1">条码库未加载：${esc(code)}</div>`);
+  }
+}
+
+function printBarcodeLabel() {
+  const area = document.getElementById('barcode-print-area');
+  if (!area) return;
+  const content = area.innerHTML;
+  const w = window.open('', '_blank', 'width=420,height=320');
+  if (!w) { showAlertModal('提示', '浏览器拦截了打印窗口，请允许弹窗后重试'); return; }
+  w.document.write('<html><head><title>产品库存标签</title><style>' +
+    '@media print { body * { visibility: hidden; } #label { visibility: visible; } #label { position: absolute; left: 0; top: 0; } }' +
+    'body { font-family: Arial, sans-serif; text-align: center; padding: 20px; }</style></head>' +
+    '<body><div id="label">' + content + '</div><script>window.onload=function(){setTimeout(function(){window.print();},300);};<\/script></body></html>');
+  w.document.close();
+}
+
+// ==================== 扫码查询 ====================
+async function renderScanQuery() {
+  document.getElementById('page-title').textContent = '扫码查询';
+  document.getElementById('page-subtitle').textContent = '扫描或输入条码查询产品库存';
+  
+  const container = document.getElementById('page-content');
+  if (!container) return;
+  container.innerHTML = `
+    <div class="fade-in text-xs">
+      <div class="bg-white border border-slate-200 rounded-lg p-4 mb-4">
+        <label class="block text-xs text-slate-500 mb-1">条码（扫码枪扫描或手动输入后回车）</label>
+        <div class="flex gap-2">
+          <input id="scan-query-input" type="text" class="flex-1 px-3 py-2 border border-slate-200 rounded text-sm" placeholder="请输入或扫描条码" autocomplete="off">
+          <button onclick="handleScanQueryInput()" class="px-4 py-2 bg-teal-500 text-white rounded text-xs hover:bg-teal-600">查询</button>
+        </div>
+      </div>
+      <div id="scan-query-result"></div>
+    </div>
+  `;
+  const input = document.getElementById('scan-query-input');
+  input.focus();
+  input.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') { e.preventDefault(); handleScanQueryInput(); }
+  });
+}
+
+async function handleScanQueryInput() {
+  const input = document.getElementById('scan-query-input');
+  const code = (input.value || '').trim();
+  if (!code) { showAlertModal('提示', '请输入条码'); input.focus(); return; }
+  const resultBox = document.getElementById('scan-query-result');
+  resultBox.innerHTML = '<div class="bg-white border border-slate-200 rounded-lg p-4 text-center text-slate-400">查询中...</div>';
+  try {
+    const resp = await fetch('/api/barcode/' + encodeURIComponent(code));
+    if (!resp.ok) {
+      const r = await resp.json().catch(() => ({}));
+      resultBox.innerHTML = `<div class="bg-white border border-red-200 rounded-lg p-4 text-center text-red-500">${esc(r.error || '未找到该条码对应的产品')}</div>`;
+      input.value = ''; input.focus();
+      return;
+    }
+    const result = await resp.json();
+    const p = result.product;
+    const invRows = (result.inventory || []).map(i => `
+      <tr class="hover:bg-slate-50">
+        <td class="px-3 py-2 text-xs text-slate-600">${esc(i.warehouse || '-')}</td>
+        <td class="px-3 py-2 text-xs text-slate-600">${i.quantity}</td>
+        <td class="px-3 py-2 text-xs text-slate-600">${i.minStock || 0}</td>
+      </tr>`).join('') || '<tr><td colspan="3" class="px-3 py-2 text-xs text-slate-400 text-center">暂无库存记录</td></tr>';
+    resultBox.innerHTML = `
+      <div class="bg-white border border-slate-200 rounded-lg overflow-hidden">
+        <div class="px-4 py-3 border-b border-slate-200">
+          <div class="text-sm font-semibold text-slate-800">${esc(p.name || p.type || '未知产品')}</div>
+          <div class="text-xs text-slate-500 mt-1">型号：${esc(p.model || '-')}　规格：${esc(p.spec || '-')}　颜色：${esc(p.color || '-')}　条码：<span class="font-mono">${esc(p.barcode || '-')}</span></div>
+        </div>
+        <table class="w-full">
+          <thead class="bg-slate-50"><tr>
+            <th class="px-3 py-2 text-left text-xs text-slate-600">仓库</th>
+            <th class="px-3 py-2 text-left text-xs text-slate-600">库存数量</th>
+            <th class="px-3 py-2 text-left text-xs text-slate-600">最低库存</th>
+          </tr></thead>
+          <tbody class="divide-y divide-slate-100">${invRows}</tbody>
+        </table>
+      </div>`;
+    input.value = ''; input.focus();
+  } catch (e) {
+    resultBox.innerHTML = `<div class="bg-white border border-red-200 rounded-lg p-4 text-center text-red-500">查询失败：${esc(e.message)}</div>`;
+  }
+}
+
+// ==================== 扫码出入库 ====================
+let _scanProduct = null;
+
+async function renderScanInOut() {
+  document.getElementById('page-title').textContent = '扫码出入库';
+  document.getElementById('page-subtitle').textContent = '扫描产品条码快速办理入库、出库或调拨';
+  
+  if (!warehouseData || warehouseData.length === 0) { try { await fetchWarehouses(); } catch (e) {} }
+  const whOptions = '<option value="">请选择仓库</option>' + (warehouseData || []).map(w => `<option value="${esc(w.name)}">${esc(w.name)}</option>`).join('');
+  
+  const container = document.getElementById('page-content');
+  if (!container) return;
+  container.innerHTML = `
+    <div class="fade-in text-xs">
+      <div class="bg-white border border-slate-200 rounded-lg p-4 mb-4">
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+          <div><label class="block text-xs text-slate-500 mb-1">条码（扫描/输入后回车）</label>
+            <input id="sio_barcode" type="text" class="w-full px-2 py-1.5 border border-slate-200 rounded text-sm" placeholder="扫描或输入条码" autocomplete="off"></div>
+          <div><label class="block text-xs text-slate-500 mb-1">产品</label><input id="sio_product" type="text" class="w-full px-2 py-1.5 border border-slate-200 rounded text-sm bg-slate-50" readonly placeholder="扫描后自动带出"></div>
+          <div><label class="block text-xs text-slate-500 mb-1">操作类型</label>
+            <select id="sio_mode" class="w-full px-2 py-1.5 border border-slate-200 rounded text-sm" onchange="toggleScanMode()">
+              <option value="in">入库</option>
+              <option value="out">出库</option>
+              <option value="transfer">调拨</option>
+            </select></div>
+          <div><label class="block text-xs text-slate-500 mb-1">数量</label><input id="sio_quantity" type="number" min="1" class="w-full px-2 py-1.5 border border-slate-200 rounded text-sm" placeholder="数量"></div>
+          <div><label class="block text-xs text-slate-500 mb-1">仓库</label><select id="sio_warehouse" class="w-full px-2 py-1.5 border border-slate-200 rounded text-sm">${whOptions}</select></div>
+          <div id="sio_target_box" style="display:none"><label class="block text-xs text-slate-500 mb-1">目标仓库（调拨）</label><select id="sio_target" class="w-full px-2 py-1.5 border border-slate-200 rounded text-sm">${whOptions}</select></div>
+          <div class="col-span-2"><label class="block text-xs text-slate-500 mb-1">备注</label><input id="sio_remark" type="text" class="w-full px-2 py-1.5 border border-slate-200 rounded text-sm" placeholder="选填"></div>
+        </div>
+        <div class="flex gap-2">
+          <button id="sio_submit" onclick="submitScanInOut()" class="px-4 py-2 bg-teal-500 text-white rounded text-xs hover:bg-teal-600">确认入库</button>
+          <button onclick="resetScanInOutForm()" class="px-4 py-2 border border-slate-300 rounded text-xs hover:bg-slate-50">复位</button>
+        </div>
+      </div>
+      <div class="bg-white border border-slate-200 rounded-lg overflow-hidden">
+        <div class="px-4 py-3 border-b border-slate-200 font-medium text-slate-700">最近出库记录</div>
+        <table class="w-full">
+          <thead class="bg-slate-50"><tr>
+            <th class="px-3 py-2 text-left text-xs text-slate-600">出库单号</th>
+            <th class="px-3 py-2 text-left text-xs text-slate-600">产品</th>
+            <th class="px-3 py-2 text-left text-xs text-slate-600">数量</th>
+            <th class="px-3 py-2 text-left text-xs text-slate-600">仓库</th>
+            <th class="px-3 py-2 text-left text-xs text-slate-600">类型</th>
+            <th class="px-3 py-2 text-left text-xs text-slate-600">操作人</th>
+            <th class="px-3 py-2 text-left text-xs text-slate-600">时间</th>
+          </tr></thead>
+          <tbody class="divide-y divide-slate-100">
+            ${(data.stockOutRecords || []).slice().reverse().slice(0, 20).map(r => `
+              <tr class="hover:bg-slate-50">
+                <td class="px-3 py-2 text-xs text-slate-600">${esc(r.stockOutNo || '-')}</td>
+                <td class="px-3 py-2 text-xs text-slate-800">${esc(r.productName || '-')}</td>
+                <td class="px-3 py-2 text-xs text-slate-600">${r.quantity}</td>
+                <td class="px-3 py-2 text-xs text-slate-600">${esc(r.warehouse || '-')}</td>
+                <td class="px-3 py-2 text-xs text-slate-600">${esc(r.type || '-')}</td>
+                <td class="px-3 py-2 text-xs text-slate-600">${esc(r.operator || '-')}</td>
+                <td class="px-3 py-2 text-xs text-slate-400">${(r.createdAt || '').slice(0, 16).replace('T', ' ')}</td>
+              </tr>`).join('') || '<tr><td colspan="7" class="px-3 py-4 text-center text-xs text-slate-400">暂无出库记录</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+  
+  const barcodeInput = document.getElementById('sio_barcode');
+  barcodeInput.addEventListener('keydown', async function(e) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const code = (barcodeInput.value || '').trim();
+      if (!code) return;
+      await lookupScanProduct(code);
+    }
+  });
+  barcodeInput.focus();
+}
+
+async function lookupScanProduct(code) {
+  try {
+    const resp = await fetch('/api/barcode/' + encodeURIComponent(code));
+    if (!resp.ok) { const r = await resp.json().catch(() => ({})); showAlertModal('提示', r.error || '未找到该条码对应的产品'); return; }
+    const result = await resp.json();
+    _scanProduct = result.product;
+    document.getElementById('sio_product').value = _scanProduct.name || _scanProduct.type || '';
+    const whSel = document.getElementById('sio_warehouse');
+    if (result.inventory && result.inventory.length && whSel) {
+      const first = result.inventory[0];
+      for (let i = 0; i < whSel.options.length; i++) {
+        if (whSel.options[i].value === first.warehouse) { whSel.selectedIndex = i; break; }
+      }
+    }
+    document.getElementById('sio_quantity').focus();
+  } catch (e) {
+    showAlertModal('错误', '查询失败：' + e.message);
+  }
+}
+
+function toggleScanMode() {
+  const mode = document.getElementById('sio_mode').value;
+  const targetBox = document.getElementById('sio_target_box');
+  const submitBtn = document.getElementById('sio_submit');
+  if (targetBox) targetBox.style.display = mode === 'transfer' ? '' : 'none';
+  if (submitBtn) submitBtn.textContent = mode === 'in' ? '确认入库' : mode === 'out' ? '确认出库' : '确认调拨';
+}
+
+function resetScanInOutForm() {
+  _scanProduct = null;
+  document.getElementById('sio_barcode').value = '';
+  document.getElementById('sio_product').value = '';
+  document.getElementById('sio_quantity').value = '';
+  document.getElementById('sio_remark').value = '';
+  document.getElementById('sio_mode').value = 'in';
+  toggleScanMode();
+  document.getElementById('sio_barcode').focus();
+}
+
+async function submitScanInOut() {
+  const mode = document.getElementById('sio_mode').value;
+  const productId = _scanProduct ? _scanProduct.id : '';
+  const quantity = Number(document.getElementById('sio_quantity').value);
+  const warehouse = document.getElementById('sio_warehouse').value;
+  const targetWarehouse = document.getElementById('sio_target') ? document.getElementById('sio_target').value : '';
+  const remark = document.getElementById('sio_remark').value.trim();
+  if (!productId) { showAlertModal('提示', '请先扫描或输入产品条码'); return; }
+  if (!(quantity > 0)) { showAlertModal('提示', '数量必须为正数'); return; }
+  
+  try {
+    if (mode === 'in') {
+      const resp = await fetch('/api/common-stock-in', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ productId, quantity, warehouse: warehouse || '主仓库', remark })
+      });
+      const result = await resp.json();
+      if (!resp.ok || !result.success) { showAlertModal('提示', result.message || result.error || '入库失败'); return; }
+      showSuccessModal('入库成功');
+    } else if (mode === 'out') {
+      const resp = await fetch('/api/stock-out-records', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ productId, quantity, warehouse, remark, type: '扫码出库' })
+      });
+      const result = await resp.json();
+      if (!resp.ok) { showAlertModal('提示', result.error || '出库失败'); return; }
+      showSuccessModal('出库成功');
+    } else if (mode === 'transfer') {
+      if (!warehouse || !targetWarehouse) { showAlertModal('提示', '请选择源仓库和目标仓库'); return; }
+      if (warehouse === targetWarehouse) { showAlertModal('提示', '源仓库与目标仓库不能相同'); return; }
+      const resp = await fetch('/api/warehouse-transfers', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ productId, quantity, fromWarehouse: warehouse, toWarehouse: targetWarehouse, remark, type: '调拨' })
+      });
+      const result = await resp.json();
+      if (!resp.ok) { showAlertModal('提示', result.error || '调拨失败'); return; }
+      showSuccessModal('调拨成功');
+    }
+    await fetchData();
+    resetScanInOutForm();
+    renderScanInOut();
+  } catch (e) {
+    showAlertModal('错误', '操作失败：' + e.message);
   }
 }
 
@@ -8406,6 +8905,8 @@ function renderInventoryProduct() {
           <button onclick="switchInventoryTab('product-statistics')" class="px-3 py-1.5 border border-slate-300 rounded text-xs hover:bg-slate-50">库存统计</button>
           <button onclick="switchInventoryTab('product-check')" class="px-3 py-1.5 border border-slate-300 rounded text-xs hover:bg-slate-50">盘点库存清单</button>
           <button onclick="switchInventoryTab('product-label')" class="px-3 py-1.5 border border-slate-300 rounded text-xs hover:bg-slate-50">打印产品库存标签</button>
+          <button onclick="switchInventoryTab('scan-query')" class="px-3 py-1.5 border border-slate-300 rounded text-xs hover:bg-slate-50">扫码查询</button>
+          <button onclick="switchInventoryTab('scan-inout')" class="px-3 py-1.5 border border-slate-300 rounded text-xs hover:bg-slate-50">扫码出入库</button>
         </div>
       </div>
       
@@ -16218,7 +16719,12 @@ window.showRolePermissions = async function(roleId) {
       module: '库存管理', 
       children: [
         { name: '库存查询', actions: ['查看', '导出'] },
-        { name: '库存调整', actions: ['调整', '保存'] }
+        { name: '库存调整', actions: ['调整', '保存'] },
+        { name: '仓位', actions: ['查看', '添加', '编辑', '删除'] },
+        { name: '调拨', actions: ['查看', '调拨'] },
+        { name: '盘点', actions: ['查看', '盘点'] },
+        { name: '条码', actions: ['查看', '生成', '打印'] },
+        { name: '扫码出入库', actions: ['查看', '入库', '出库', '调拨'] }
       ]
     },
     { 
@@ -17625,46 +18131,62 @@ function renderMaterialsWarehouseList() {
 
 let locationData = [];
 
-const LOCATION_DATA_KEY = 'inventory_location_data_v1';
-
-function loadLocationData() {
+// ===== 仓位数据已迁移到后端 /api/warehouse-locations =====
+async function loadLocationData() {
   try {
-    const saved = localStorage.getItem(LOCATION_DATA_KEY);
-    if (saved) {
-      locationData = JSON.parse(saved);
-      // // // // console.log('Loaded location data from localStorage:', locationData.length, 'items');
-    } else {
-      locationData = [
-        { id: 1, name: 'A001', isDefault: true, creator: '张三', createTime: '2024-01-15 10:30', modifier: '李四', modifyTime: '2024-01-16 14:20', status: '启用' },
-        { id: 2, name: 'A002', isDefault: false, creator: '张三', createTime: '2024-01-15 10:35', modifier: '-', modifyTime: '-', status: '启用' },
-        { id: 3, name: 'B001', isDefault: false, creator: '李四', createTime: '2024-01-16 09:00', modifier: '张三', modifyTime: '2024-01-17 11:45', status: '停用' }
-      ];
-      saveLocationData();
-      // // // // console.log('Initialized default location data');
+    const resp = await fetch('/api/warehouse-locations');
+    const list = await resp.json();
+    locationData = Array.isArray(list) ? list : [];
+    if (data) data.warehouseLocations = locationData;
+  } catch (e) {
+    console.error('Failed to load warehouse locations:', e);
+    locationData = (data && data.warehouseLocations) || [];
+  }
+}
+
+// 迁移旧的 localStorage 仓位到后端：后端为空且有本地数据时逐条上传，随后清理本地存储
+async function migrateLocalStorageLocations() {
+  const KEY = 'inventory_location_data_v1';
+  let saved = null;
+  try { saved = localStorage.getItem(KEY); } catch (e) { saved = null; }
+  if (!saved) return;
+  let legacy = [];
+  try { legacy = JSON.parse(saved); } catch (e) { legacy = []; }
+  if (!Array.isArray(legacy) || legacy.length === 0) {
+    try { localStorage.removeItem(KEY); } catch (e) {}
+    return;
+  }
+  const backendHas = Array.isArray(locationData) && locationData.length > 0;
+  if (!backendHas) {
+    let whName = '';
+    if (data && Array.isArray(data.warehouses) && data.warehouses.length) {
+      const def = data.warehouses.find(w => w.isDefault !== false) || data.warehouses[0];
+      whName = def ? def.name : '';
     }
-  } catch (e) {
-    console.error('Failed to load location data:', e);
-    locationData = [
-      { id: 1, name: 'A001', isDefault: true, creator: '张三', createTime: '2024-01-15 10:30', modifier: '李四', modifyTime: '2024-01-16 14:20', status: '启用' },
-      { id: 2, name: 'A002', isDefault: false, creator: '张三', createTime: '2024-01-15 10:35', modifier: '-', modifyTime: '-', status: '启用' },
-      { id: 3, name: 'B001', isDefault: false, creator: '李四', createTime: '2024-01-16 09:00', modifier: '张三', modifyTime: '2024-01-17 11:45', status: '停用' }
-    ];
+    for (const item of legacy) {
+      if (!item || !item.name) continue;
+      try {
+        await fetch('/api/warehouse-locations', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: String(item.name),
+            isDefault: !!item.isDefault,
+            status: item.status === '启用' ? '启用' : '停用',
+            warehouse: whName,
+            remark: item.remark || ''
+          })
+        });
+      } catch (e) { console.error('仓位迁移失败:', e); }
+    }
+    await loadLocationData();
   }
+  try { localStorage.removeItem(KEY); } catch (e) {}
 }
 
-function saveLocationData() {
-  try {
-    localStorage.setItem(LOCATION_DATA_KEY, JSON.stringify(locationData));
-    // // // // console.log('Saved location data to localStorage:', locationData.length, 'items');
-  } catch (e) {
-    console.error('Failed to save location data:', e);
-    showAlertModal('保存失败', '保存失败，请检查浏览器存储设置');
-  }
-}
-
-function renderMaterialsWarehouseLocation() {
+async function renderMaterialsWarehouseLocation() {
+  await loadLocationData();
   document.getElementById('page-title').textContent = '仓位清单';
-  document.getElementById('page-subtitle').textContent = '查看和管理仓库仓位信';
+  document.getElementById('page-subtitle').textContent = '查看和管理仓库仓位信息';
   
   const container = document.getElementById('page-content');
   if (!container) return;
@@ -17674,7 +18196,7 @@ function renderMaterialsWarehouseLocation() {
       <div class="bg-white rounded-xl shadow-sm overflow-hidden">
         <div class="border-b border-slate-200 px-6 py-4 flex items-center justify-between">
           <div></div>
-          <button onclick="materialsSubPage='warehouse-location-create'; renderMaterialsWarehouseLocationCreate()" class="px-4 py-2 bg-teal-500 text-white rounded-lg hover:bg-teal-600 text-sm cursor-pointer">新增</button>
+          <button onclick="materialsSubPage='warehouse-location-create'; renderMaterialsWarehouseLocationCreate()" class="px-4 py-2 bg-teal-500 text-white rounded-lg hover:bg-teal-600 text-sm cursor-pointer" data-perm="库存管理-仓位-添加">新增</button>
         </div>
         <div class="p-6">
           <div class="overflow-x-auto">
@@ -17684,11 +18206,10 @@ function renderMaterialsWarehouseLocation() {
                   <th class="px-4 py-3 text-center text-sm font-semibold text-slate-600">操作</th>
                   <th class="px-4 py-3 text-center text-sm font-semibold text-slate-600">序号</th>
                   <th class="px-4 py-3 text-center text-sm font-semibold text-slate-600">仓位名称</th>
+                  <th class="px-4 py-3 text-center text-sm font-semibold text-slate-600">所属仓库</th>
                   <th class="px-4 py-3 text-center text-sm font-semibold text-slate-600">是否默认</th>
                   <th class="px-4 py-3 text-center text-sm font-semibold text-slate-600">创建人</th>
                   <th class="px-4 py-3 text-center text-sm font-semibold text-slate-600">创建时间</th>
-                  <th class="px-4 py-3 text-center text-sm font-semibold text-slate-600">修改人</th>
-                  <th class="px-4 py-3 text-center text-sm font-semibold text-slate-600">修改时间</th>
                   <th class="px-4 py-3 text-center text-sm font-semibold text-slate-600">状态</th>
                 </tr>
               </thead>
@@ -17696,24 +18217,23 @@ function renderMaterialsWarehouseLocation() {
                 ${locationData.map((loc, index) => `
                   <tr class="hover:bg-slate-50">
                     <td class="px-4 py-3 text-center">
-                      <button onclick="editLocation(${loc.id})" class="px-3 py-1 text-xs bg-blue-500 text-white rounded hover:bg-blue-600 cursor-pointer">编辑</button>
-                      <button onclick="deleteLocation(${loc.id})" class="px-3 py-1 text-xs bg-red-500 text-white rounded hover:bg-red-600 ml-2 cursor-pointer">删除</button>
+                      <button onclick="editLocation('${esc(String(loc.id))}')" class="px-3 py-1 text-xs bg-blue-500 text-white rounded hover:bg-blue-600 cursor-pointer">编辑</button>
+                      <button onclick="deleteLocation('${esc(String(loc.id))}')" class="px-3 py-1 text-xs bg-red-500 text-white rounded hover:bg-red-600 ml-2 cursor-pointer">删除</button>
                     </td>
                     <td class="px-4 py-3 text-center text-sm text-slate-800">${index + 1}</td>
-                    <td class="px-4 py-3 text-center text-sm text-slate-800">${loc.name}</td>
+                    <td class="px-4 py-3 text-center text-sm text-slate-800">${esc(loc.name)}</td>
+                    <td class="px-4 py-3 text-center text-sm text-slate-600">${esc(loc.warehouse || '-')}</td>
                     <td class="px-4 py-3 text-center text-sm text-slate-600">${loc.isDefault ? '是' : ''}</td>
-                    <td class="px-4 py-3 text-center text-sm text-slate-600">${loc.creator}</td>
-                    <td class="px-4 py-3 text-center text-sm text-slate-600">${loc.createTime}</td>
-                    <td class="px-4 py-3 text-center text-sm text-slate-600">${loc.modifier}</td>
-                    <td class="px-4 py-3 text-center text-sm text-slate-600">${loc.modifyTime}</td>
+                    <td class="px-4 py-3 text-center text-sm text-slate-600">${esc(loc.creator || '-')}</td>
+                    <td class="px-4 py-3 text-center text-sm text-slate-600">${esc(loc.createTime || '-')}</td>
                     <td class="px-4 py-3 text-center">
                       <label class="relative inline-flex items-center cursor-pointer">
-                        <input type="checkbox" ${loc.status === '启用' ? 'checked' : ''} class="sr-only peer" onchange="toggleLocationStatus(${loc.id}, this)">
+                        <input type="checkbox" ${loc.status === '启用' ? 'checked' : ''} class="sr-only peer" onchange="toggleLocationStatus('${esc(String(loc.id))}', this)">
                         <div class="w-11 h-6 bg-gray-300 peer-focus:outline-none rounded-full peer peer-checked:bg-teal-500 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all"></div>
                       </label>
                     </td>
                   </tr>
-                `).join('')}
+                `).join('') || '<tr><td colspan="8" class="px-4 py-6 text-center text-sm text-slate-400">暂无仓位数据</td></tr>'}
               </tbody>
             </table>
           </div>
@@ -17723,9 +18243,16 @@ function renderMaterialsWarehouseLocation() {
   `;
 }
 
-function renderMaterialsWarehouseLocationCreate() {
+async function renderMaterialsWarehouseLocationCreate() {
   document.getElementById('page-title').textContent = '新增仓位';
   document.getElementById('page-subtitle').textContent = '添加新的仓位信息';
+  
+  if (!warehouseData || warehouseData.length === 0) {
+    try { await fetchWarehouses(); } catch (e) {}
+  }
+  const warehouseOptions = (warehouseData || []).map(w =>
+    `<option value="${esc(String(w.id))}">${esc(w.name)}</option>`
+  ).join('') || '<option value="">主仓库</option>';
   
   const container = document.getElementById('page-content');
   if (!container) return;
@@ -17740,17 +18267,23 @@ function renderMaterialsWarehouseLocationCreate() {
           <div class="grid grid-cols-3 gap-4 mb-4">
             <div class="flex items-center gap-3">
               <label class="text-sm font-medium text-slate-700 w-20"><span class="text-red-500">*</span>仓位名称</label>
-              <input type="text" id="location-name" class="flex-1 px-3 py-2 border border-slate-200 rounded focus:outline-none focus:ring-2 focus:ring-teal-500" placeholder="请输入属性名">
+              <input type="text" id="location-name" class="flex-1 px-3 py-2 border border-slate-200 rounded focus:outline-none focus:ring-2 focus:ring-teal-500" placeholder="请输入仓位名称">
+            </div>
+            <div class="flex items-center gap-3">
+              <label class="text-sm font-medium text-slate-700 w-20">所属仓库</label>
+              <select id="location-warehouse" class="flex-1 px-3 py-2 border border-slate-200 rounded focus:outline-none focus:ring-2 focus:ring-teal-500">
+                ${warehouseOptions}
+              </select>
             </div>
             <div class="flex items-center gap-3">
               <label class="text-sm font-medium text-slate-700 w-20">是否默认</label>
               <label class="relative inline-flex items-center cursor-pointer">
                 <input type="checkbox" id="location-default" class="sr-only peer">
-                <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-['] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-gray-300"></div>
+                <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-teal-500"></div>
               </label>
             </div>
             <div class="flex items-center gap-3">
-              <label class="text-sm font-medium text-slate-700 w-20">状</label>
+              <label class="text-sm font-medium text-slate-700 w-20">状态</label>
               <select id="location-status" class="flex-1 px-3 py-2 border border-slate-200 rounded focus:outline-none focus:ring-2 focus:ring-teal-500">
                 <option value="启用">启用</option>
                 <option value="停用">停用</option>
@@ -17772,36 +18305,38 @@ function renderMaterialsWarehouseLocationCreate() {
   });
 }
 
-function saveLocation() {
+async function saveLocation() {
   const name = document.getElementById('location-name').value;
+  const warehouseId = document.getElementById('location-warehouse') ? document.getElementById('location-warehouse').value : '';
   const isDefault = document.getElementById('location-default').checked;
   const status = document.getElementById('location-status').value;
   
   if (!name.trim()) {
-    showAlertModal('提示', '请输入仓位名');
+    showAlertModal('提示', '请输入仓位名称');
     return;
   }
   
-  const newLocation = {
-    id: locationData.length > 0 ? Math.max(...locationData.map(l => l.id)) + 1 : 1,
-    name: name,
-    isDefault: isDefault,
-    creator: '当前用户',
-    createTime: new Date().toLocaleString('zh-CN'),
-    modifier: '-',
-    modifyTime: '-',
-    status: status
-  };
-  
-  locationData.push(newLocation);
-  saveLocationData();
-  showSuccessModal('保存成功');
-  renderMaterialsWarehouseLocation();
+  try {
+    const resp = await fetch('/api/warehouse-locations', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: name.trim(), warehouseId, isDefault, status })
+    });
+    const result = await resp.json();
+    if (!resp.ok) { showAlertModal('提示', result.error || '保存失败'); return; }
+    await loadLocationData();
+    showSuccessModal('保存成功');
+    renderMaterialsWarehouseLocation();
+  } catch (e) {
+    showAlertModal('错误', '保存失败：' + e.message);
+  }
 }
 
 function editLocation(id) {
-  const location = locationData.find(l => l.id === id);
+  const location = locationData.find(l => String(l.id) === String(id));
   if (!location) return;
+  const warehouseOptions = (warehouseData || []).map(w =>
+    `<option value="${esc(String(w.id))}" ${String(w.id) === String(location.warehouseId || '') ? 'selected' : ''}>${esc(w.name)}</option>`
+  ).join('');
   
   const modal = document.createElement('div');
   modal.id = 'edit-location-modal';
@@ -17814,20 +18349,26 @@ function editLocation(id) {
       <form id="edit-location-form" class="p-6">
         <div class="mb-4">
           <label class="block text-sm font-medium text-slate-700 mb-2"><span class="text-red-500">*</span>仓位名称</label>
-          <input type="text" id="edit-location-name" value="${location.name}" class="w-full px-3 py-2 border border-slate-200 rounded focus:outline-none focus:ring-2 focus:ring-teal-500">
+          <input type="text" id="edit-location-name" value="${esc(location.name)}" class="w-full px-3 py-2 border border-slate-200 rounded focus:outline-none focus:ring-2 focus:ring-teal-500">
+        </div>
+        <div class="mb-4">
+          <label class="block text-sm font-medium text-slate-700 mb-2">所属仓库</label>
+          <select id="edit-location-warehouse" class="w-full px-3 py-2 border border-slate-200 rounded focus:outline-none focus:ring-2 focus:ring-teal-500">
+            ${warehouseOptions}
+          </select>
         </div>
         <div class="flex items-center justify-between mb-4">
           <label class="text-sm font-medium text-slate-700">是否默认</label>
           <label class="relative inline-flex items-center cursor-pointer">
             <input type="checkbox" id="edit-location-default" ${location.isDefault ? 'checked' : ''} class="sr-only peer">
-            <div class="${location.isDefault ? 'bg-teal-500' : 'bg-gray-300'} w-11 h-6 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-['] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all"></div>
+            <div class="${location.isDefault ? 'bg-teal-500' : 'bg-gray-300'} w-11 h-6 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all"></div>
           </label>
         </div>
         <div class="flex items-center justify-between mb-4">
-          <label class="text-sm font-medium text-slate-700">状</label>
+          <label class="text-sm font-medium text-slate-700">状态</label>
           <label class="relative inline-flex items-center cursor-pointer">
             <input type="checkbox" id="edit-location-status" ${location.status === '启用' ? 'checked' : ''} class="sr-only peer">
-            <div class="${location.status === '启用' ? 'bg-teal-500' : 'bg-gray-300'} w-11 h-6 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-['] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all"></div>
+            <div class="${location.status === '启用' ? 'bg-teal-500' : 'bg-gray-300'} w-11 h-6 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all"></div>
           </label>
         </div>
         <div class="flex justify-end gap-3">
@@ -17846,38 +18387,60 @@ function editLocation(id) {
   });
 }
 
-function saveEditedLocation(id) {
-  const location = locationData.find(l => l.id === id);
-  if (!location) return;
+async function saveEditedLocation(id) {
+  const name = document.getElementById('edit-location-name').value;
+  const warehouseId = document.getElementById('edit-location-warehouse') ? document.getElementById('edit-location-warehouse').value : '';
+  const isDefault = document.getElementById('edit-location-default').checked;
+  const status = document.getElementById('edit-location-status').checked ? '启用' : '停用';
   
-  location.name = document.getElementById('edit-location-name').value;
-  location.isDefault = document.getElementById('edit-location-default').checked;
-  location.status = document.getElementById('edit-location-status').checked ? '启用' : '停用';
-  location.modifier = '当前用户';
-  location.modifyTime = new Date().toLocaleString('zh-CN');
-  
-  saveLocationData();
-  document.getElementById('edit-location-modal').remove();
-  renderMaterialsWarehouseLocation();
-  showSuccessModal('修改成功');
+  try {
+    const resp = await fetch('/api/warehouse-locations/' + encodeURIComponent(id), {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: name.trim(), warehouseId, isDefault, status })
+    });
+    const result = await resp.json();
+    if (!resp.ok) { showAlertModal('提示', result.error || '保存失败'); return; }
+    document.getElementById('edit-location-modal').remove();
+    await loadLocationData();
+    renderMaterialsWarehouseLocation();
+    showSuccessModal('修改成功');
+  } catch (e) {
+    showAlertModal('错误', '保存失败：' + e.message);
+  }
 }
 
 function deleteLocation(id) {
-  showConfirmModal('删除仓位', '确定要删除这个仓位吗？', function() {
-    locationData = locationData.filter(l => l.id !== id);
-    saveLocationData();
-    renderMaterialsWarehouseLocation();
-    showSuccessModal('删除成功');
+  showConfirmModal('删除仓位', '确定要删除这个仓位吗？', async function() {
+    try {
+      const resp = await fetch('/api/warehouse-locations/' + encodeURIComponent(id), { method: 'DELETE' });
+      if (!resp.ok) { const r = await resp.json().catch(() => ({})); showAlertModal('提示', r.error || '删除失败'); return; }
+      await loadLocationData();
+      renderMaterialsWarehouseLocation();
+      showSuccessModal('删除成功');
+    } catch (e) {
+      showAlertModal('错误', '删除失败：' + e.message);
+    }
   });
 }
 
-function toggleLocationStatus(id, checkbox) {
-  const location = locationData.find(l => l.id === id);
-  if (location) {
-    location.status = checkbox.checked ? '启用' : '停用';
-    location.modifier = '当前用户';
-    location.modifyTime = new Date().toLocaleString('zh-CN');
-    saveLocationData();
+async function toggleLocationStatus(id, checkbox) {
+  const prev = checkbox.checked;
+  try {
+    const resp = await fetch('/api/warehouse-locations/' + encodeURIComponent(id), {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: prev ? '启用' : '停用' })
+    });
+    if (!resp.ok) {
+      checkbox.checked = !prev;
+      const r = await resp.json().catch(() => ({}));
+      showAlertModal('提示', r.error || '更新失败');
+      return;
+    }
+    const location = locationData.find(l => String(l.id) === String(id));
+    if (location) location.status = prev ? '启用' : '停用';
+  } catch (e) {
+    checkbox.checked = !prev;
+    showAlertModal('错误', '更新失败：' + e.message);
   }
 }
 

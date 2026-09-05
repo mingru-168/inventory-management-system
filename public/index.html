@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>进销存管理系统</title>
   <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"></script>
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
     
@@ -416,8 +417,10 @@
                   <div class="sidebar-dropdown-content-item" onclick="navigateTo('inventory'); switchInventoryTab('product-stock-query');">产品库存查询</div>
                   <div class="sidebar-dropdown-content-item" onclick="navigateTo('inventory'); renderInventoryProduct();">产品出入库查询</div>
                   <div class="sidebar-dropdown-content-item" onclick="navigateTo('inventory'); renderInventoryProduct();">库存统计</div>
-                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('inventory'); renderInventoryProduct();">盘点库存清单</div>
-                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('inventory'); renderInventoryProduct();">打印产品库存标签</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('inventory'); switchInventoryTab('product-check');" data-perm="库存管理-盘点-查看">盘点库存清单</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('inventory'); switchInventoryTab('product-label');" data-perm="库存管理-条码-查看">打印产品库存标签</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('inventory'); switchInventoryTab('scan-query');" data-perm="库存管理-扫码出入库-查看">扫码查询</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('inventory'); switchInventoryTab('scan-inout');" data-perm="库存管理-扫码出入库-查看">扫码出入库</div>
                 </div>
                 <div class="sidebar-dropdown-content">
                   <div class="sidebar-dropdown-content-item" onclick="navigateTo('inventory'); renderInventoryMaterial();">材料库存查询</div>
@@ -430,7 +433,8 @@
                   <div class="sidebar-dropdown-content-item" onclick="navigateTo('inventory'); renderInventoryChange();">材料领用</div>
                   <div class="sidebar-dropdown-content-item" onclick="navigateTo('inventory'); renderInventoryChange();">按订单领料</div>
                   <div class="sidebar-dropdown-content-item" onclick="navigateTo('inventory'); renderInventoryChange();">领料单查询</div>
-                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('inventory'); renderInventoryChange();">材料移库</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('inventory'); switchInventoryTab('material-transfer');" data-perm="库存管理-调拨-查看">材料移库</div>
+                  <div class="sidebar-dropdown-content-item" onclick="navigateTo('inventory'); switchInventoryTab('material-transfer');" data-perm="库存管理-调拨-查看">仓库调拨</div>
                   <div class="sidebar-dropdown-content-item" onclick="navigateTo('inventory'); renderInventoryChange();">变更凭证查询</div>
                 </div>
               </div>
@@ -621,7 +625,7 @@
                 <div class="sidebar-dropdown-content">
                   <div class="sidebar-dropdown-content-item" onclick="materialsSubPage='warehouse-create'; navigateTo('materials');">新增仓库</div>
                   <div class="sidebar-dropdown-content-item" onclick="materialsSubPage='warehouse-list'; navigateTo('materials');">仓库清单</div>
-                  <div class="sidebar-dropdown-content-item" onclick="materialsSubPage='warehouse-location'; navigateTo('materials');">仓位清单</div>
+                  <div class="sidebar-dropdown-content-item" onclick="materialsSubPage='warehouse-location'; navigateTo('materials');" data-perm="库存管理-仓位-查看">仓位清单</div>
                 </div>
                 <div class="sidebar-dropdown-content">
                   <div class="sidebar-dropdown-content-item" onclick="materialsSubPage='product-config'; navigateTo('materials');">配置项维护</div>
