@@ -5,8 +5,9 @@ const fs = require('fs');
 const crypto = require('crypto');
 
 const app = express();
-const PORT = 3000;
-const DATA_FILE = path.join(__dirname, 'data.json');
+// 端口/数据文件支持环境变量覆盖（自动化测试用临时数据，生产保持不变）
+const PORT = Number(process.env.PORT) || 3000;
+const DATA_FILE = process.env.DATA_FILE || path.join(__dirname, 'data.json');
 
 app.disable('x-powered-by'); // 隐藏框架标识，降低指纹信息泄露
 
@@ -325,7 +326,7 @@ function isHashedPassword(stored) {
 }
 
 // ===== 服务端会话管理：登录生成真实 token，登出失效；会话持久化到文件，服务重启不掉线 =====
-const SESSION_FILE = path.join(__dirname, 'sessions.json');
+const SESSION_FILE = process.env.SESSION_FILE || path.join(__dirname, 'sessions.json');
 const sessions = new Map(); // token -> { username, createdAt, expiresAt, lastActive }
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000; // 单次有效期 12 小时
 const SESSION_MAX_MS = 7 * 24 * 60 * 60 * 1000; // 滑动窗口上限 7 天
@@ -3230,12 +3231,17 @@ app.use((err, req, res, next) => {
   res.status(500).json({ success: false, error: '服务器内部错误', message: '服务器处理请求时发生异常，请稍后重试' });
 });
 
-app.listen(PORT, () => {
-  console.log(`Server is running on http://localhost:${PORT}`);
-  console.log('Full-stack Inventory Management System is ready!');
-  createBackup();
-  // 每日自动备份（保留最近 N 份）
-  setInterval(() => {
+// 直接运行（node server/index.js）时启动监听；被测试 require 时仅导出 app，不监听端口
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`Server is running on http://localhost:${PORT}`);
+    console.log('Full-stack Inventory Management System is ready!');
     createBackup();
-  }, 24 * 60 * 60 * 1000).unref();
-});
+    // 每日自动备份（保留最近 N 份）
+    setInterval(() => {
+      createBackup();
+    }, 24 * 60 * 60 * 1000).unref();
+  });
+}
+
+module.exports = { app, getData: () => data, generateOrderNo };
