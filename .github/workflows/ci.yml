@@ -21,6 +21,10 @@ jobs:
         with:
           node-version: ${{ matrix.node-version }}
 
-      # 全量校验：语法检查 + 单元测试（仅用 Node 内置模块，无需安装依赖）
+      # 安装依赖（集成测试需加载 server/index.js，其依赖 express 等运行时依赖）
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      # 全量校验：语法检查 + 单元测试 + 仓库/条码集成测试
       - name: Run check
         run: npm run check
