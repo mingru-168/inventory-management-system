@@ -21262,6 +21262,7 @@ function loadCurrentPage() {
 
 async function navigateTo(page) {
   // // // // console.log('navigateTo called with:', page);
+  if (window.closeMobileSidebar) window.closeMobileSidebar(); // 移动端：导航即关抽屉
   currentPage = page;
   saveCurrentPage(page);
   highlightSidebar(page);

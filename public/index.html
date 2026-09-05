@@ -226,6 +226,80 @@
       body * { visibility: hidden; }
       #order-receipt, #order-receipt * { visibility: visible; }
     }
+
+    /* 桌面默认隐藏移动端控件 */
+    .mobile-hamburger { display: none; }
+    #sidebar-backdrop { display: none; }
+
+    /* ===== 移动端适配（≤768px）：抽屉导航 + 点击下拉 + 表格横向滚动 + 弹窗/表头窄屏 ===== */
+    @media screen and (max-width: 768px) {
+      #app { height: 100dvh; }
+      /* 侧边栏抽屉化 */
+      aside {
+        position: fixed;
+        top: 0; left: 0; bottom: 0;
+        width: 240px;
+        z-index: 45;
+        transform: translateX(-100%);
+        transition: transform 0.25s ease;
+        box-shadow: 4px 0 16px rgba(0,0,0,0.08);
+      }
+      body.sidebar-open aside { transform: translateX(0); }
+      /* 遮罩层 */
+      #sidebar-backdrop {
+        position: fixed;
+        inset: 0;
+        background: rgba(15, 23, 42, 0.45);
+        z-index: 40;
+        display: none;
+      }
+      body.sidebar-open #sidebar-backdrop { display: block; }
+      /* 汉堡按钮 */
+      .mobile-hamburger { display: inline-flex !important; }
+      /* header 精简 */
+      header { padding: 10px 12px !important; }
+      #page-subtitle, #user-name, #user-email { display: none !important; }
+      header button[onclick="handleLogout()"] span { display: none !important; }
+      /* 内容区：减内边距 + 横向滚动兜底 */
+      #page-content {
+        padding: 12px !important;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+      }
+      /* 表格横向滚动：白卡片自身成为滚动容器（覆盖 overflow-hidden 裁剪） */
+      #page-content .bg-white { overflow-x: auto; }
+      #page-content table { min-width: max-content; }
+      /* 弹窗窄屏适配 */
+      .fixed.inset-0 > div { max-width: calc(100vw - 32px); overflow-x: auto; }
+      /* 下拉菜单：移动端内联展开 + 点击切换（覆盖桌面 fixed/hover） */
+      .sidebar-dropdown-menu-wrapper {
+        position: static !important;
+        left: auto !important; top: auto !important;
+        width: auto !important; min-width: 0 !important;
+        transform: none !important;
+      }
+      .sidebar-dropdown-menu { box-shadow: none; border: none; border-radius: 0; transform: none; }
+      .sidebar-dropdown:hover .sidebar-dropdown-menu-wrapper,
+      .sidebar-dropdown-menu-wrapper:hover,
+      .sidebar-dropdown:hover .sidebar-dropdown-menu {
+        pointer-events: none; opacity: 0; visibility: hidden;
+      }
+      .sidebar-dropdown-tabs, .sidebar-dropdown-tabs-2, .sidebar-dropdown-tabs-3,
+      .sidebar-dropdown-tabs-6, .sidebar-dropdown-tabs-7 { display: none; }
+      .sidebar-dropdown-content-wrapper, .sidebar-dropdown-content-wrapper-2,
+      .sidebar-dropdown-content-wrapper-3, .sidebar-dropdown-content-wrapper-6,
+      .sidebar-dropdown-content-wrapper-7 { grid-template-columns: 1fr; border-top: none; }
+      .sidebar-dropdown-content { border-right: none; padding: 0; }
+      .sidebar-dropdown.open .sidebar-dropdown-menu-wrapper,
+      .sidebar-dropdown.open .sidebar-dropdown-menu {
+        pointer-events: auto; opacity: 1; visibility: visible; transform: none;
+      }
+      /* 可选增强：3-7 列表格压成 2 列（验证时抽查，异常则移除） */
+      #page-content .grid-cols-3, #page-content .grid-cols-4, #page-content .grid-cols-5,
+      #page-content .grid-cols-6, #page-content .grid-cols-7 {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
   </style>
 </head>
 <body class="bg-slate-50">
@@ -719,9 +793,16 @@
     <main class="flex-1 flex flex-col overflow-hidden">
       <header class="bg-white border-b border-slate-200 px-6 py-3">
         <div class="flex items-center justify-between">
-          <div>
-            <h2 id="page-title" class="text-sm font-semibold text-slate-800">仪表盘</h2>
-            <p class="text-xs text-slate-500" id="page-subtitle">全栈进销存管理系统 - 数据由后端提供</p>
+          <div class="flex items-center gap-2 min-w-0">
+            <button id="sidebar-toggle-btn" class="mobile-hamburger p-2 rounded-lg text-slate-600 hover:bg-slate-100" aria-label="打开菜单">
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/>
+              </svg>
+            </button>
+            <div class="min-w-0">
+              <h2 id="page-title" class="text-sm font-semibold text-slate-800 truncate">仪表盘</h2>
+              <p class="text-xs text-slate-500" id="page-subtitle">全栈进销存管理系统 - 数据由后端提供</p>
+            </div>
           </div>
           <div class="flex items-center gap-3">
             <div class="relative" id="notif-bell-wrap">
@@ -762,6 +843,8 @@
       <div id="page-content" class="flex-1 overflow-y-auto p-6"></div>
     </main>
   </div>
+  
+  <div id="sidebar-backdrop"></div>
   
   <div id="modal" class="fixed inset-0 bg-black/50 hidden flex items-center justify-center z-50">
     <div id="modal-content" class="bg-white rounded-xl shadow-2xl max-w-lg w-full mx-4 max-h-[90vh] overflow-y-auto fade-in"></div>
@@ -844,5 +927,53 @@
   <script src="perm-core.js?v=2026061701"></script>
   <script src="app.js?v=2026061702"></script>
   <script src="delivery.js?v=2026061501"></script>
+  <script>
+    // ===== 移动端交互层：抽屉导航 + 点击式下拉（仅 ≤768px 生效，桌面 hover/navigate 逻辑不动） =====
+    (function () {
+      const MQ = window.matchMedia('(max-width: 768px)'); // 与 CSS 断点一致
+
+      function closeMobileSidebar() {
+        document.body.classList.remove('sidebar-open');
+        document.querySelectorAll('.sidebar-dropdown.open').forEach(d => d.classList.remove('open'));
+      }
+      window.closeMobileSidebar = closeMobileSidebar;
+
+      // 汉堡按钮：开/关抽屉
+      const toggle = document.getElementById('sidebar-toggle-btn');
+      if (toggle) toggle.addEventListener('click', function (e) {
+        e.stopPropagation();
+        if (!MQ.matches) return;
+        document.body.classList.toggle('sidebar-open');
+      });
+
+      // 遮罩：关抽屉
+      const backdrop = document.getElementById('sidebar-backdrop');
+      if (backdrop) backdrop.addEventListener('click', closeMobileSidebar);
+
+      // 捕获阶段统一处理：点外部关抽屉、点下拉标题展开/收起
+      document.addEventListener('click', function (e) {
+        if (!MQ.matches) return;
+        if (document.body.classList.contains('sidebar-open')
+            && !e.target.closest('aside')
+            && !e.target.closest('#sidebar-toggle-btn')) {
+          closeMobileSidebar();
+          return;
+        }
+        const header = e.target.closest('.sidebar-dropdown > .sidebar-item');
+        if (!header) return;
+        e.preventDefault();
+        e.stopPropagation(); // 捕获阶段拦截，阻止 app.js 对 .sidebar-item 的 navigateTo
+        const dd = header.closest('.sidebar-dropdown');
+        const wasOpen = dd.classList.contains('open');
+        document.querySelectorAll('.sidebar-dropdown.open').forEach(d => d.classList.remove('open'));
+        if (!wasOpen) dd.classList.add('open');
+      }, true);
+
+      // 跨断点（旋转/拉宽）自动关抽屉并复位子菜单
+      window.addEventListener('resize', function () {
+        if (!MQ.matches) closeMobileSidebar();
+      });
+    })();
+  </script>
 </body>
 </html>
