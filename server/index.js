@@ -327,6 +327,25 @@ function isHashedPassword(stored) {
   return typeof stored === 'string' && stored.startsWith(SCRYPT_PREFIX);
 }
 
+// ===== 弱密码检测与新密码强度校验 =====
+const WEAK_PASSWORDS = new Set([
+  '123456', '12345678', '123456789', '1234567890',
+  '111111', '000000', '666666', '888888', '999999',
+  'password', 'password123', 'abc123', 'qwerty', 'admin', 'admin123'
+]);
+
+// 是否为常见弱密码（登录成功后用于提醒改密）
+function isWeakPassword(pw) {
+  return WEAK_PASSWORDS.has(String(pw || ''));
+}
+
+// 新密码强度校验：≥8 位、包含字母与数字、且非常见弱密码
+function isValidPassword(pw) {
+  if (typeof pw !== 'string' || pw.length < 8) return false;
+  if (WEAK_PASSWORDS.has(pw)) return false;
+  return /[a-zA-Z]/.test(pw) && /\d/.test(pw);
+}
+
 // ===== 服务端会话管理：登录生成真实 token，登出失效；会话持久化到文件，服务重启不掉线 =====
 const SESSION_FILE = process.env.SESSION_FILE || path.join(__dirname, 'sessions.json');
 const sessions = new Map(); // token -> { username, createdAt, expiresAt, lastActive }
@@ -2113,6 +2132,7 @@ app.post('/api/login', (req, res) => {
     success: true,
     message: '登录成功',
     token: token,
+    weakPassword: isWeakPassword(password),
     user: {
       id: user.id,
       username: user.username,
@@ -2176,10 +2196,10 @@ app.put('/api/users/me', (req, res) => {
       });
     }
     
-    if (newPassword.length < 6) {
+    if (!isValidPassword(newPassword)) {
       return res.json({
         success: false,
-        message: '新密码长度不能少于6位'
+        message: '新密码需至少8位，且同时包含字母和数字，不能使用常见弱密码'
       });
     }
     

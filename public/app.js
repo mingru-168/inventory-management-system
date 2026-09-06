@@ -446,6 +446,9 @@ async function handleLogin() {
     
     if (result.success) {
       saveLogin(result.token, result.user);
+      if (result.weakPassword) {
+        sessionStorage.setItem('weakPwdRemind', '1');
+      }
       applyRoleGating();
       showSuccessModal('登录成功');
       
@@ -21499,8 +21502,8 @@ async function saveUserInfo() {
       showAlertModal('提示', '两次输入的新密码不一致');
       return;
     }
-    if (newPassword.length < 6) {
-      showAlertModal('提示', '新密码长度不能少于6位');
+    if (newPassword.length < 8 || !/[a-zA-Z]/.test(newPassword) || !/\d/.test(newPassword)) {
+      showAlertModal('提示', '新密码需至少8位，且同时包含字母和数字');
       return;
     }
   }
@@ -21583,6 +21586,14 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (!isLoggedIn()) {
     renderLogin();
     return;
+  }
+  
+  // 弱密码提醒：登录时检测到常用弱密码，提示尽快修改（仅提醒一次）
+  if (sessionStorage.getItem('weakPwdRemind')) {
+    sessionStorage.removeItem('weakPwdRemind');
+    setTimeout(() => {
+      showAlertModal('安全提示', '检测到您的密码为常用弱密码，为保障账号安全，请尽快在「个人资料」中修改密码（新密码需至少8位且同时包含字母和数字）。');
+    }, 800);
   }
   
   // // // // console.log('DOMContentLoaded event fired');
