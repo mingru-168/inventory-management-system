@@ -1,12 +1,11 @@
 {
   "name": "erp-server",
   "version": "1.0.0",
-  "description": "ERP System Server with SQLite",
+  "description": "ERP System Server",
   "main": "index.js",
   "scripts": {
-    "start": "node index_sqlite.js",
-    "dev": "node index_sqlite.js",
-    "migrate": "node migrate_sqlite.js"
+    "start": "node index.js",
+    "dev": "node index.js"
   },
   "dependencies": {
     "better-sqlite3": "^12.10.0",
