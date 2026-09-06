@@ -121,15 +121,15 @@ function isAdminUser() {
   return r.includes('管理员') || r.includes('系统管理员') || r.includes('超级管理员');
 }
 
-// 返回当前用户角色的权限数组；返回 null 表示"拥有全部权限"（管理员或未配置）。
+// 返回当前用户角色的权限数组；管理员返回 null 表示"拥有全部权限"，其余角色未配置权限时返回 []（无任何权限，fail-closed）。
 function getRolePermissions() {
   if (isAdminUser()) return null;
-  if (!data || !Array.isArray(data.roles)) return null;
+  if (!data || !Array.isArray(data.roles)) return [];
   const u = currentUser || JSON.parse(sessionStorage.getItem(CURRENT_USER_KEY) || '{}');
   const role = data.roles.find(x => String(x.name) === String(u.role));
-  if (!role) return null;
+  if (!role) return [];
   const perms = role.permissions;
-  if (!Array.isArray(perms) || perms.length === 0) return null;
+  if (!Array.isArray(perms) || perms.length === 0) return [];
   return perms;
 }
 
@@ -17001,7 +17001,9 @@ window.showRolePermissions = async function(roleId) {
     { 
       module: '采购管理', 
       children: [
-        { name: '采购订单', actions: ['查看', '添加', '修改', '删除', '打印', '导出'] }
+        { name: '采购订单', actions: ['查看', '添加', '修改', '删除', '收货', '打印', '导出'] },
+        { name: '采购退货', actions: ['查看', '退货'] },
+        { name: '材料审核', actions: ['查看', '添加', '编辑', '删除'] }
       ]
     },
     { 
@@ -17009,6 +17011,7 @@ window.showRolePermissions = async function(roleId) {
       children: [
         { name: '库存查询', actions: ['查看', '导出'] },
         { name: '库存调整', actions: ['调整', '保存'] },
+        { name: '仓库', actions: ['查看', '添加', '编辑', '删除'] },
         { name: '仓位', actions: ['查看', '添加', '编辑', '删除'] },
         { name: '调拨', actions: ['查看', '调拨'] },
         { name: '盘点', actions: ['查看', '盘点'] },
@@ -17026,7 +17029,7 @@ window.showRolePermissions = async function(roleId) {
     { 
       module: '财务管理', 
       children: [
-        { name: '财务报表', actions: ['查看', '导出'] }
+        { name: '财务报表', actions: ['查看', '导出', '添加'] }
       ]
     },
     { 
@@ -17038,7 +17041,9 @@ window.showRolePermissions = async function(roleId) {
     { 
       module: '资料管理', 
       children: [
-        { name: '产品资料', actions: ['查看', '添加', '编辑', '删除', '导入', '导出'] }
+        { name: '产品资料', actions: ['查看', '添加', '编辑', '删除', '导入', '导出'] },
+        { name: '客户资料', actions: ['查看', '添加', '编辑', '删除'] },
+        { name: '供应商资料', actions: ['查看', '添加', '编辑', '删除'] }
       ]
     }
   ];

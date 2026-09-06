@@ -8,7 +8,7 @@
  *
  * 约定（与权限配置面板保持一致）：
  *  1. 权限串形如 `模块名-功能名[-动作名]`，例如 `销售管理-待审核订单-审核`。
- *  2. permissions 为 null / 非数组 / 空数组 均视为「全部权限」（兜底，避免破坏旧工作流）。
+ *  2. permissions 为 null / 非数组 / 空数组 均视为「无任何权限」（fail-closed；未配置权限的角色需管理员在权限配置面板授权）。
  *  3. admin 与名称含「管理员 / 系统管理员 / 超级管理员」的角色视为超管，拥有全部权限。
  */
 (function (root, factory) {
@@ -28,14 +28,14 @@
 
   /**
    * 解析某个角色的权限列表。
-   * 返回 null 表示「全部权限」（找不到角色、或未配置权限数组）。
+   * 返回 [] 表示「无任何权限」（找不到角色、或未配置权限数组，fail-closed）。
    * 返回数组表示细分的权限串列表。
    */
   function rolePermsList(roles, roleName) {
     const role = (roles || []).find(r => String(r.name) === String(roleName));
-    if (!role) return null;
+    if (!role) return [];
     const perms = role.permissions;
-    if (!Array.isArray(perms) || perms.length === 0) return null;
+    if (!Array.isArray(perms) || perms.length === 0) return [];
     return perms;
   }
 

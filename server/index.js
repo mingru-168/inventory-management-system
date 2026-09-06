@@ -586,7 +586,7 @@ app.get('/api/customers', (req, res) => {
   res.json(data.customers);
 });
 
-app.post('/api/customers', (req, res) => {
+app.post('/api/customers', requirePerm('资料管理', '客户资料', '添加'), (req, res) => {
   const allowed = { name: 'string', contact: 'string', phone: 'string', email: 'string', address: 'string', type: 'string', level: 'string', category: 'string', region: 'string', taxId: 'string', creditLevel: 'string', remark: 'string' };
   const customer = {
     id: generateId(),
@@ -598,7 +598,7 @@ app.post('/api/customers', (req, res) => {
   res.json({ success: true, message: '客户添加成功', data: customer });
 });
 
-app.put('/api/customers/:id', (req, res) => {
+app.put('/api/customers/:id', requirePerm('资料管理', '客户资料', '编辑'), (req, res) => {
   const customerId = req.params.id;
   const index = data.customers.findIndex(c => String(c.id) === String(customerId));
   if (index !== -1) {
@@ -610,7 +610,7 @@ app.put('/api/customers/:id', (req, res) => {
   }
 });
 
-app.delete('/api/customers/:id', (req, res) => {
+app.delete('/api/customers/:id', requirePerm('资料管理', '客户资料', '删除'), (req, res) => {
   const customerId = req.params.id;
   const index = data.customers.findIndex(c => String(c.id) === String(customerId));
   if (index !== -1) {
@@ -627,7 +627,7 @@ app.get('/api/suppliers', (req, res) => {
 });
 
 // 创建供应商
-app.post('/api/suppliers', (req, res) => {
+app.post('/api/suppliers', requirePerm('资料管理', '供应商资料', '添加'), (req, res) => {
   if (!data.suppliers) data.suppliers = [];
   
   const maxId = data.suppliers.length > 0 ? Math.max(...data.suppliers.map(s => Number(s.id) || 0)) : 0;
@@ -643,7 +643,7 @@ app.post('/api/suppliers', (req, res) => {
 });
 
 // 更新供应商
-app.put('/api/suppliers/:id', (req, res) => {
+app.put('/api/suppliers/:id', requirePerm('资料管理', '供应商资料', '编辑'), (req, res) => {
   const supplierId = req.params.id;
   const index = data.suppliers.findIndex(s => String(s.id) === String(supplierId));
   if (index !== -1) {
@@ -660,7 +660,7 @@ app.put('/api/suppliers/:id', (req, res) => {
 });
 
 // 删除供应商
-app.delete('/api/suppliers/:id', (req, res) => {
+app.delete('/api/suppliers/:id', requirePerm('资料管理', '供应商资料', '删除'), (req, res) => {
   const supplierId = req.params.id;
   const index = data.suppliers.findIndex(s => String(s.id) === String(supplierId));
   if (index !== -1) {
@@ -695,7 +695,7 @@ app.get('/api/production-orders', (req, res) => {
 });
 
 // 作废派工单
-app.post('/api/scheduling-orders/cancel', (req, res) => {
+app.post('/api/scheduling-orders/cancel', requirePerm('生产管理', '派工管理', '作废'), (req, res) => {
   const { orderNo } = req.body;
   const orderIndex = data.productionOrders.findIndex(o => o.orderNo === orderNo);
   if (orderIndex !== -1) {
@@ -709,7 +709,7 @@ app.post('/api/scheduling-orders/cancel', (req, res) => {
 });
 
 // 删除派工单（按订单号）
-app.delete('/api/scheduling-orders/:orderNo', (req, res) => {
+app.delete('/api/scheduling-orders/:orderNo', requirePerm('生产管理', '派工管理', '作废'), (req, res) => {
   const { orderNo } = req.params;
   const orderIndex = data.productionOrders.findIndex(o => o.orderNo === orderNo);
   if (orderIndex !== -1) {
@@ -724,7 +724,7 @@ app.delete('/api/scheduling-orders/:orderNo', (req, res) => {
 // 修改派工单某一工序项（改单/改数）
 // 仅允许白名单字段，避免原型污染与越权字段注入；quantity 必须为正数。
 const SCHEDULING_ITEM_FIELDS = ['model', 'productName', 'name', 'color', 'spec', 'size', 'tableColor', 'counterColor', 'followWay', 'receiver', 'followNo', 'quantity'];
-app.put('/api/scheduling-orders/:orderNo/items/:itemIndex', function (req, res) {
+app.put('/api/scheduling-orders/:orderNo/items/:itemIndex', requirePerm('生产管理', '派工管理', '修改'), function (req, res) {
   const orderNo = String(req.params.orderNo || '');
   const itemIndex = Number(req.params.itemIndex);
   const order = data.productionOrders.find(o => String(o.orderNo) === orderNo);
@@ -1055,7 +1055,7 @@ app.post('/api/sales-orders', requirePerm('销售管理', '销售订单', '添�
   res.json(order);
 });
 
-app.put('/api/sales-orders/:id', (req, res) => {
+app.put('/api/sales-orders/:id', requirePerm('销售管理', '销售订单', '修改'), (req, res) => {
   const order = data.salesOrders.find(o => o.id === req.params.id);
   if (order) {
     Object.assign(order, pick(req.body, {
@@ -1249,7 +1249,7 @@ app.get('/api/sales-orders/:id/tracking', (req, res) => {
   res.json(trackingRecords);
 });
 
-app.post('/api/sales-orders/:id/tracking', (req, res) => {
+app.post('/api/sales-orders/:id/tracking', requirePerm('销售管理', '销售订单', '修改'), (req, res) => {
   const orderId = req.params.id;
   const { action, content, operator } = req.body;
   
@@ -1271,7 +1271,7 @@ app.post('/api/sales-orders/:id/tracking', (req, res) => {
   res.json(newRecord);
 });
 
-app.post('/api/allocate-order/:id', (req, res) => {
+app.post('/api/allocate-order/:id', requirePerm('销售管理', '销售发货', '发货'), (req, res) => {
   const order = data.salesOrders.find(o => o.id === req.params.id);
   if (!order) {
     res.status(404).json({ error: 'Order not found' });
@@ -1447,7 +1447,7 @@ app.get('/api/products/:id/inventory-locks', (req, res) => {
   res.json([...locks, ...oldLocks]);
 });
 
-app.post('/api/purchase-orders', (req, res) => {
+app.post('/api/purchase-orders', requirePerm('采购管理', '采购订单', '添加'), (req, res) => {
   const order = {
     id: generateId(),
     orderNo: generateOrderNo('PO', data.purchaseOrders),
@@ -1471,7 +1471,7 @@ app.post('/api/purchase-orders', (req, res) => {
   res.json(order);
 });
 
-app.put('/api/purchase-orders/:id', (req, res) => {
+app.put('/api/purchase-orders/:id', requirePerm('采购管理', '采购订单', '修改'), (req, res) => {
   const order = data.purchaseOrders.find(o => o.id === req.params.id);
   if (order) {
     Object.assign(order, pick(req.body, { supplierId: 'string', supplier_id: 'string', supplierName: 'string', supplier_name: 'string', supplier: 'string', contact: 'string', phone: 'string', address: 'string', items: true, orderDate: 'string', order_date: 'string', totalAmount: true, total_amount: true, remark: 'string', note: 'string', warehouse: 'string', expectedDate: 'string', status: 'string', productName: 'string', product_id: true, productId: true, quantity: true, unit: 'string', unitPrice: true, price: true, color: 'string', spec: 'string' }));
@@ -1645,7 +1645,7 @@ app.get('/api/warehouses', (req, res) => {
   res.json(data.warehouses);
 });
 
-app.post('/api/warehouses', (req, res) => {
+app.post('/api/warehouses', requirePerm('库存管理', '仓库', '添加'), (req, res) => {
   const warehouse = {
     id: generateId(),
     code: 'WH' + String(data.warehouses.length + 1).padStart(3, '0'),
@@ -1656,7 +1656,7 @@ app.post('/api/warehouses', (req, res) => {
   res.json(warehouse);
 });
 
-app.put('/api/warehouses/:id', (req, res) => {
+app.put('/api/warehouses/:id', requirePerm('库存管理', '仓库', '编辑'), (req, res) => {
   const warehouse = data.warehouses.find(w => w.id === req.params.id);
   if (warehouse) {
     Object.assign(warehouse, pick(req.body, { name: 'string', type: 'string', manager: 'string', phone: 'string', address: 'string', remark: 'string', isDefault: true, isActive: true, capacity: true }));
@@ -1667,7 +1667,7 @@ app.put('/api/warehouses/:id', (req, res) => {
   }
 });
 
-app.delete('/api/warehouses/:id', (req, res) => {
+app.delete('/api/warehouses/:id', requirePerm('库存管理', '仓库', '删除'), (req, res) => {
   const index = data.warehouses.findIndex(w => w.id === req.params.id);
   if (index !== -1) {
     const deleted = data.warehouses.splice(index, 1)[0];
@@ -2027,7 +2027,7 @@ app.get('/api/barcode/:code', (req, res) => {
   res.json({ product, inventory });
 });
 
-app.post('/api/finance-records', (req, res) => {
+app.post('/api/finance-records', requirePerm('财务管理', '财务报表', '添加'), (req, res) => {
   const record = {
     id: generateId(),
     ...pick(req.body, { type: 'string', category: 'string', amount: true, date: 'string', description: 'string', relatedOrderId: true, direction: 'string', payer: 'string', payee: 'string', bank: 'string', method: 'string', recordNo: 'string' })
@@ -2046,7 +2046,7 @@ app.get('/api/product-spec-prices/:productId', (req, res) => {
   res.json(productSpecPrices);
 });
 
-app.post('/api/product-spec-prices', (req, res) => {
+app.post('/api/product-spec-prices', requirePerm('资料管理', '产品资料', '编辑'), (req, res) => {
   const specPrice = {
     id: generateId(),
     ...pick(req.body, { productId: 'string', spec: 'string', price: true, costPrice: true, color: 'string', tabletopColor: 'string', size: 'string', minQuantity: true, remark: 'string' })
@@ -2056,7 +2056,7 @@ app.post('/api/product-spec-prices', (req, res) => {
   res.json(specPrice);
 });
 
-app.put('/api/product-spec-prices/:id', (req, res) => {
+app.put('/api/product-spec-prices/:id', requirePerm('资料管理', '产品资料', '编辑'), (req, res) => {
   const specPrice = data.productSpecPrices.find(item => item.id === req.params.id);
   if (specPrice) {
     Object.assign(specPrice, pick(req.body, { productId: 'string', spec: 'string', price: true, costPrice: true, color: 'string', tabletopColor: 'string', size: 'string', minQuantity: true, remark: 'string' }));
@@ -2067,7 +2067,7 @@ app.put('/api/product-spec-prices/:id', (req, res) => {
   }
 });
 
-app.delete('/api/product-spec-prices/:id', (req, res) => {
+app.delete('/api/product-spec-prices/:id', requirePerm('资料管理', '产品资料', '编辑'), (req, res) => {
   const index = data.productSpecPrices.findIndex(item => item.id === req.params.id);
   if (index !== -1) {
     const deleted = data.productSpecPrices.splice(index, 1)[0];
@@ -2444,7 +2444,7 @@ app.get('/api/stock-records', (req, res) => {
   res.json(data.stockInRecords || []);
 });
 
-app.post('/api/stock-records', (req, res) => {
+app.post('/api/stock-records', requirePerm('库存管理', '库存调整', '调整'), (req, res) => {
   if (!data.stockInRecords) data.stockInRecords = [];
   const newRecord = {
     id: req.body.id || generateId(),
@@ -2456,7 +2456,7 @@ app.post('/api/stock-records', (req, res) => {
   res.json(newRecord);
 });
 
-app.post('/api/stock-in-records', (req, res) => {
+app.post('/api/stock-in-records', requirePerm('库存管理', '库存调整', '调整'), (req, res) => {
   if (!data.stockInRecords) data.stockInRecords = [];
   const newRecord = {
     id: req.body.id || generateId(),
@@ -2512,7 +2512,7 @@ app.post('/api/stock-in-records', (req, res) => {
   res.json(newRecord);
 });
 
-app.put('/api/stock-in-records/:id', (req, res) => {
+app.put('/api/stock-in-records/:id', requirePerm('库存管理', '库存调整', '调整'), (req, res) => {
   if (!data.stockInRecords) data.stockInRecords = [];
   const idx = data.stockInRecords.findIndex(r => String(r.id) === String(req.params.id));
   if (idx === -1) {
@@ -2540,7 +2540,7 @@ app.put('/api/stock-in-records/:id', (req, res) => {
   res.json(updatedRecord);
 });
 
-app.put('/api/stock-records/:id', (req, res) => {
+app.put('/api/stock-records/:id', requirePerm('库存管理', '库存调整', '调整'), (req, res) => {
   if (!data.stockInRecords) data.stockInRecords = [];
   const idx = data.stockInRecords.findIndex(r => String(r.id) === String(req.params.id));
   if (idx === -1) {
@@ -2551,7 +2551,7 @@ app.put('/api/stock-records/:id', (req, res) => {
   res.json(data.stockInRecords[idx]);
 });
 
-app.delete('/api/stock-in-records/:id', (req, res) => {
+app.delete('/api/stock-in-records/:id', requirePerm('库存管理', '库存调整', '调整'), (req, res) => {
   if (!data.stockInRecords) data.stockInRecords = [];
   const idx = data.stockInRecords.findIndex(r => String(r.id) === String(req.params.id));
   if (idx === -1) {
@@ -2574,7 +2574,7 @@ app.delete('/api/stock-in-records/:id', (req, res) => {
   res.json({ message: 'Deleted successfully' });
 });
 
-app.delete('/api/stock-records/:id', (req, res) => {
+app.delete('/api/stock-records/:id', requirePerm('库存管理', '库存调整', '调整'), (req, res) => {
   if (!data.stockInRecords) data.stockInRecords = [];
   const idx = data.stockInRecords.findIndex(r => String(r.id) === String(req.params.id));
   if (idx === -1) {
@@ -2669,7 +2669,7 @@ app.post('/api/plan-orders', requirePerm('生产管理', '计划订单', '添加
 });
 
 // 删除计划订单
-app.delete('/api/plan-orders/:id', (req, res) => {
+app.delete('/api/plan-orders/:id', requirePerm('生产管理', '计划订单', '删除'), (req, res) => {
   const index = data.planOrders.findIndex(o => o.id === req.params.id);
   if (index !== -1) {
     // 同时删除关联的工序
@@ -2685,7 +2685,7 @@ app.delete('/api/plan-orders/:id', (req, res) => {
 });
 
 // 更新计划订单（基本信息）
-app.put('/api/plan-orders/:id', (req, res) => {
+app.put('/api/plan-orders/:id', requirePerm('生产管理', '计划订单', '修改'), (req, res) => {
   const planOrder = data.planOrders.find(o => o.id === req.params.id);
   if (!planOrder) {
     res.status(404).json({ error: 'Plan order not found' });
@@ -2709,7 +2709,7 @@ app.put('/api/plan-orders/:id', (req, res) => {
 });
 
 // 更新计划订单状态
-app.put('/api/plan-orders/:id/status', (req, res) => {
+app.put('/api/plan-orders/:id/status', requirePerm('生产管理', '计划订单', '保存'), (req, res) => {
   const planOrder = data.planOrders.find(o => o.id === req.params.id);
   if (planOrder) {
     planOrder.status = req.body.status;
@@ -2775,7 +2775,7 @@ app.get('/api/processes/pending', (req, res) => {
 });
 
 // 配置工序（批量添加/更新）
-app.put('/api/plan-orders/:id/processes', (req, res) => {
+app.put('/api/plan-orders/:id/processes', requirePerm('生产管理', '计划订单', '保存'), (req, res) => {
   const { processes } = req.body;
   const planOrderId = req.params.id;
   
@@ -2845,7 +2845,7 @@ app.put('/api/processes/:id/assign', requirePerm('生产管理', '派工管理',
 });
 
 // 工序完工确认
-app.put('/api/processes/:id/complete', (req, res) => {
+app.put('/api/processes/:id/complete', requirePerm('生产管理', '完工确认', '按单确认'), (req, res) => {
   const process = data.processes.find(p => p.id === req.params.id);
   
   if (!process) {

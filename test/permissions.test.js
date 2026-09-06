@@ -54,14 +54,20 @@ test('rolePermsList：能找到角色且权限非空 → 返回权限数组', ()
   assert.deepStrictEqual(P.rolePermsList(ROLES, '生产工'), ['生产管理-完工确认-按单确认']);
 });
 
-test('rolePermsList：permissions 为空数组/缺字段/角色不存在 → 返回 null（全权限兜底）', () => {
-  assert.strictEqual(P.rolePermsList(ROLES, '满权限未配置'), null);
-  assert.strictEqual(P.rolePermsList(ROLES, '未配置字段'), null);
-  assert.strictEqual(P.rolePermsList(ROLES, '不存在的角色'), null);
-  assert.strictEqual(P.rolePermsList(ROLES, ''), null);
-  assert.strictEqual(P.rolePermsList(ROLES, undefined), null);
-  assert.strictEqual(P.rolePermsList(null, '财务'), null);
-  assert.strictEqual(P.rolePermsList([], '财务'), null);
+test('rolePermsList：permissions 为空数组/缺字段/角色不存在 → 返回 []（无任何权限，fail-closed）', () => {
+  assert.deepStrictEqual(P.rolePermsList(ROLES, '满权限未配置'), []);
+  assert.deepStrictEqual(P.rolePermsList(ROLES, '未配置字段'), []);
+  assert.deepStrictEqual(P.rolePermsList(ROLES, '不存在的角色'), []);
+  assert.deepStrictEqual(P.rolePermsList(ROLES, ''), []);
+  assert.deepStrictEqual(P.rolePermsList(ROLES, undefined), []);
+  assert.deepStrictEqual(P.rolePermsList(null, '财务'), []);
+  assert.deepStrictEqual(P.rolePermsList([], '财务'), []);
+});
+
+test('rolePermsList：空权限 [] 经 hasPerm 判定为拒绝（fail-closed 端到端）', () => {
+  assert.strictEqual(P.hasPerm([], '销售管理', '销售订单', '添加'), false);
+  assert.strictEqual(P.hasPerm([], '生产管理', '派工管理', '派工'), false);
+  assert.strictEqual(P.hasModuleAccess([], '销售管理'), false);
 });
 
 //------ hasPerm ------
@@ -149,6 +155,8 @@ test('模拟 requirePerm（后端）判定结果与前端一致', () => {
   assert.strictEqual(judge('u2', '生产工', ROLES, '生产管理-完工确认-按单确认'), true);
   // admin 恒允许
   assert.strictEqual(judge('admin', '任何', ROLES, '系统管理-用户管理-删除'), true);
-  // 角色未配置权限（兜底）→ 允许
-  assert.strictEqual(judge('u3', '未配置字段', ROLES, '任意模块-任意功能-任意动作'), true);
+  // 角色未配置权限（fail-closed）→ 拒绝
+  assert.strictEqual(judge('u3', '未配置字段', ROLES, '任意模块-任意功能-任意动作'), false);
+  // 角色不存在（fail-closed）→ 拒绝
+  assert.strictEqual(judge('u4', '不存在的角色', ROLES, '任意模块-任意功能-任意动作'), false);
 });
