@@ -1797,7 +1797,10 @@ async function renderPage(page) {
   } catch (e) {
     console.error('Failed to fetch data:', e);
   }
-  
+
+  // 移动端：抽屉进入复杂功能时提示已接管页面，跳过桌面渲染（避免异步 renderPage 覆盖提示）
+  if (isMobile() && window._mobileHintActive) return;
+
   switch(page) {
     case 'dashboard': await renderDashboard(); break;
     case 'sales': await renderSales(); break;
@@ -7956,6 +7959,7 @@ function renderPurchase() {
 }
 
 function renderPurchaseBom() {
+  if (isMobile()) { renderDesktopOnlyHint('材料审核 - BOM'); return; }
   document.getElementById('page-title').textContent = '材料审核 - BOM';
   document.getElementById('page-subtitle').textContent = 'BOM配置和订单用料核对';
 
@@ -8760,6 +8764,7 @@ async function submitWarehouseTransfer() {
 
 // ==================== 盘点 ====================
 async function renderStocktake() {
+  if (isMobile()) { renderDesktopOnlyHint('盘点库存清单'); return; }
   document.getElementById('page-title').textContent = '盘点库存清单';
   document.getElementById('page-subtitle').textContent = '按实际数量盘点并自动调整库存';
   
@@ -8838,6 +8843,7 @@ async function submitStocktake() {
 
 // ==================== 条码标签打印 ====================
 async function renderBarcodeLabel() {
+  if (isMobile()) { renderDesktopOnlyHint('条码打印'); return; }
   document.getElementById('page-title').textContent = '打印产品库存标签';
   document.getElementById('page-subtitle').textContent = '为产品生成条码并打印库存标签';
   
@@ -8938,6 +8944,7 @@ function printBarcodeLabel() {
 
 // ==================== 扫码查询 ====================
 async function renderScanQuery() {
+  if (isMobile()) { renderDesktopOnlyHint('扫码查询'); return; }
   document.getElementById('page-title').textContent = '扫码查询';
   document.getElementById('page-subtitle').textContent = '扫描或输入条码查询产品库存';
   
@@ -9009,6 +9016,7 @@ async function handleScanQueryInput() {
 let _scanProduct = null;
 
 async function renderScanInOut() {
+  if (isMobile()) { renderDesktopOnlyHint('扫码出入库'); return; }
   document.getElementById('page-title').textContent = '扫码出入库';
   document.getElementById('page-subtitle').textContent = '扫描产品条码快速办理入库、出库或调拨';
   
@@ -11298,6 +11306,7 @@ function renderFinanceFund() {
 }
 
 function renderFinanceCost() {
+  if (isMobile()) { renderDesktopOnlyHint('成本管理'); return; }
   document.getElementById('page-title').textContent = '成本管理';
   document.getElementById('page-subtitle').textContent = '管理成本、订单利润、员工工';
   
@@ -11326,6 +11335,7 @@ function renderFinanceCost() {
 }
 
 function renderFinanceAccount() {
+  if (isMobile()) { renderDesktopOnlyHint('财务账户'); return; }
   document.getElementById('page-title').textContent = '财务账户';
   document.getElementById('page-subtitle').textContent = '管理公司、客户、供应商资金账户';
   
@@ -14055,6 +14065,7 @@ function toggleSelectAllCompletion(sourceCheckbox) {
 }
 
 function renderProductionKanban() {
+  if (isMobile()) { renderDesktopOnlyHint('生产看板'); return; }
   productionSubPage = 'kanban';
   saveProductionSubPage('kanban');
   document.getElementById('page-title').textContent = '生产看板';
@@ -18088,6 +18099,7 @@ function renderReportsRanking(active) {
   reportShell('排名报表', '产品、客户、供应商排名分析', tabs, body);
 }
 function renderReports() {
+  if (isMobile()) { renderDesktopOnlyHint('报表管理'); return; }
   renderReportsSales('business');
 }
 function switchReportsTab(tab) {
@@ -21541,6 +21553,7 @@ function loadCurrentPage() {
 async function navigateTo(page) {
   // // // // console.log('navigateTo called with:', page);
   if (window.closeMobileSidebar) window.closeMobileSidebar(); // 移动端：导航即关抽屉
+  window._mobileHintActive = false; // 新导航意图：清除移动端复杂功能提示接管标记
   currentPage = page;
   saveCurrentPage(page);
   highlightSidebar(page);
@@ -21556,6 +21569,8 @@ async function navigateTo(page) {
   }
   
   renderPage(page);
+  // 移动端：从抽屉进入完整页时保持 tabbar 高亮正确（不重渲染卡片）
+  setMobileTabActive({ dashboard: 'home', sales: 'sales', purchase: 'purchase', inventory: 'inventory' }[page] || loadMobileTab());
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -21579,8 +21594,13 @@ document.addEventListener('DOMContentLoaded', async () => {
   _materialsSubPage = savedSubPage;
   // 恢复生产管理子页面状态
   productionSubPage = loadProductionSubPage();
-  // // // // console.log('About to render page:', savedPage, 'with subpage:', savedSubPage, 'productionSubPage:', productionSubPage);
-  renderPage(savedPage);
+  // 移动端：手机用户重载后回到上次 Tab 卡片视图；桌面用户走原逻辑
+  const savedTab = loadMobileTab();
+  if (isMobile() && savedTab) {
+    switchMobileTab(savedTab);
+  } else {
+    renderPage(savedPage);
+  }
   startAutoRefresh();
 });
 
@@ -22771,3 +22791,416 @@ async function saveProcessConfig(planOrderId) {
     alert('保存失败：' + error.message);
   }
 }
+
+// =====================================================================
+// ===== 移动端简易化：底部 Tab + 卡片视图 + 全屏表单 + 复杂功能提示 =====
+// =====================================================================
+
+// ---- 基础工具 ----
+function isMobile() {
+  return window.matchMedia('(max-width: 768px)').matches;
+}
+
+function loadMobileTab() {
+  try { return localStorage.getItem('mobile-tab') || 'home'; } catch (e) { return 'home'; }
+}
+
+function saveMobileTab(tab) {
+  try { localStorage.setItem('mobile-tab', tab); } catch (e) { /* ignore */ }
+}
+
+function setMobileTabActive(tab) {
+  document.querySelectorAll('#mobile-tabbar button').forEach(b => {
+    b.classList.toggle('active', b.getAttribute('data-mtab') === tab);
+  });
+}
+
+const MOBILE_TAB_TITLES = {
+  home: ['首页', '移动端简易工作台'],
+  sales: ['销售订单', '移动端卡片视图'],
+  purchase: ['采购单', '移动端卡片视图'],
+  inventory: ['产品库存', '移动端卡片视图'],
+  me: ['我的', '账号与设置']
+};
+
+// 移动端 Tab 主调度：注意不写 currentPage（桌面导航恢复键与 Tab 独立）
+function switchMobileTab(tab) {
+  if (window.closeMobileSidebar) window.closeMobileSidebar();
+  window._mobileHintActive = false; // 移动端 Tab 导航：释放复杂功能提示接管
+  saveMobileTab(tab);
+  setMobileTabActive(tab);
+  const pageMap = { home: 'dashboard', sales: 'sales', purchase: 'purchase', inventory: 'inventory', me: 'settings' };
+  highlightSidebar(pageMap[tab] || 'dashboard');
+  const t = MOBILE_TAB_TITLES[tab] || MOBILE_TAB_TITLES.home;
+  document.getElementById('page-title').textContent = t[0];
+  document.getElementById('page-subtitle').textContent = t[1];
+  switch (tab) {
+    case 'home': renderMobileHome(); break;
+    case 'sales': renderMobileSales(); break;
+    case 'purchase': renderMobilePurchase(); break;
+    case 'inventory': renderMobileInventory(); break;
+    case 'me': renderMobileMe(); break;
+    default: renderMobileHome();
+  }
+}
+
+// 状态徽章（pendingLabel 供采购单覆盖"待收货"语义）
+function mobileStatusBadge(status, pendingLabel) {
+  const m = {
+    pending: [pendingLabel || '待审核', 'bg-amber-100 text-amber-700'],
+    approved: ['已审核', 'bg-blue-100 text-blue-700'],
+    allocated: ['已配货', 'bg-indigo-100 text-indigo-700'],
+    shipped: ['已发货', 'bg-cyan-100 text-cyan-700'],
+    completed: ['已完成', 'bg-emerald-100 text-emerald-700'],
+    cancelled: ['已取消', 'bg-red-100 text-red-700'],
+    returned: ['已退货', 'bg-orange-100 text-orange-700'],
+    received: ['已收货', 'bg-blue-100 text-blue-700']
+  };
+  const [label, cls] = m[status] || ['未知', 'bg-slate-100 text-slate-600'];
+  return `<span class="inline-block px-2 py-0.5 rounded-full text-[11px] font-medium ${cls}">${label}</span>`;
+}
+
+// 精简金额（renderDashboard 内部 formatCompact 不可复用，此处独立实现）
+function mobileCompact(n) {
+  n = Number(n) || 0;
+  if (n >= 10000) return (n / 10000).toFixed(1) + 'w';
+  if (n >= 1000) return (n / 1000).toFixed(1) + 'k';
+  return String(Math.round(n));
+}
+
+// ---- 移动端首页 ----
+async function renderMobileHome() {
+  const container = document.getElementById('page-content');
+  if (!container) return;
+  container.innerHTML = '<div class="flex justify-center items-center py-20"><svg class="animate-spin w-8 h-8 text-teal-500" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg></div>';
+
+  let dash = null;
+  let alerts = { alerts: [] };
+  try { dash = await fetch('/api/dashboard').then(r => r.json()); } catch (e) { /* ignore */ }
+  try { alerts = await fetch('/api/alerts').then(r => r.json()); } catch (e) { /* ignore */ }
+
+  const trend = dash && Array.isArray(dash.salesTrend) ? dash.salesTrend : [];
+  const todayAmount = trend.length ? Number(trend[trend.length - 1].amount || 0) : 0;
+  const kpis = [
+    { label: '今日销售额', value: mobileCompact(todayAmount), cls: 'text-teal-600' },
+    { label: '待处理订单', value: dash ? (dash.pendingOrders || 0) : 0, cls: 'text-blue-600' },
+    { label: '库存预警', value: dash ? (dash.stockAlertCount || 0) : 0, cls: 'text-amber-600' },
+    { label: '待办事项', value: (notifState && notifState.count) || 0, cls: 'text-rose-600' }
+  ];
+  const kpiHtml = kpis.map(k => `
+    <div class="bg-white rounded-2xl shadow-sm border border-slate-100 p-4">
+      <p class="text-xs text-slate-500">${k.label}</p>
+      <p class="mt-1 text-2xl font-bold ${k.cls}">${k.value}</p>
+    </div>`).join('');
+
+  const actions = [
+    { label: '新增销售订单', icon: 'M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z', fn: "saveSalesSubTab('create'); navigateTo('sales')" },
+    { label: '新增采购单', icon: 'M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z', fn: 'openCreatePurchase()' },
+    { label: '手动入库', icon: 'M12 4v16m8-8H4', fn: 'showStockInModal()' },
+    { label: '销售订单', icon: 'M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z', fn: "switchMobileTab('sales')" },
+    { label: '产品库存', icon: 'M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4', fn: "switchMobileTab('inventory')" },
+    { label: '全部功能', icon: 'M4 6h16M4 12h16M4 18h16', fn: "document.getElementById('sidebar-toggle-btn').click()" }
+  ];
+  const actionHtml = actions.map(a => `
+    <button onclick="${a.fn}" class="bg-white rounded-2xl shadow-sm border border-slate-100 p-4 flex flex-col items-center justify-center gap-2 min-h-[76px] active:bg-slate-50">
+      <svg class="w-6 h-6 text-teal-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="${a.icon}"/></svg>
+      <span class="text-xs text-slate-600">${a.label}</span>
+    </button>`).join('');
+
+  const recentOrders = (data.salesOrders || []).filter(isOrderVisibleToCurrentUser)
+    .slice().sort((a, b) => String(b.createdAt || b.orderDate || '').localeCompare(String(a.createdAt || a.orderDate || ''))).slice(0, 5);
+  const recentHtml = recentOrders.length ? recentOrders.map(o => {
+    const customer = (data.customers || []).find(c => String(c.id) === String(o.customerId || ''));
+    const amt = Number(o.totalAmount ?? o.total_amount ?? 0);
+    return `
+      <div class="bg-white rounded-2xl shadow-sm border border-slate-100 p-4" onclick="viewOrderDetails('${o.id}')">
+        <div class="flex items-center justify-between gap-2">
+          <span class="text-sm font-semibold text-slate-800 truncate">${esc(o.orderNo || o.orderNumber || o.order_number || '-')}</span>
+          ${mobileStatusBadge(o.status)}
+        </div>
+        <p class="mt-1 text-xs text-slate-500">${esc(customer ? (customer.name || '-') : (o.contactName || '-'))} · ${(o.items || []).length} 项</p>
+        <div class="mt-2 flex items-center justify-between">
+          <span class="text-xs text-slate-400">${esc(o.orderDate || (o.createdAt || '').slice(0, 10) || '')}</span>
+          <span class="text-sm font-bold text-slate-800">${formatCurrency(amt)}</span>
+        </div>
+      </div>`;
+  }).join('') : '<div class="bg-white rounded-2xl shadow-sm border border-slate-100 p-6 text-center text-sm text-slate-400">暂无销售订单</div>';
+
+  const alertHtml = (alerts.alerts || []).slice(0, 3).map(a => `
+    <div class="bg-white rounded-2xl shadow-sm border border-slate-100 p-4 flex items-start gap-3" onclick="navigateTo('${a.target || 'dashboard'}')">
+      <span class="mt-1.5 w-2 h-2 rounded-full flex-shrink-0 ${a.level === 'danger' ? 'bg-red-500' : a.level === 'warning' ? 'bg-amber-500' : 'bg-sky-500'}"></span>
+      <div class="flex-1 min-w-0">
+        <p class="text-sm font-medium text-slate-700">${esc(a.title || '')}</p>
+        <p class="text-xs text-slate-500 mt-0.5 break-all">${esc(a.message || '')}</p>
+      </div>
+    </div>`).join('');
+
+  container.innerHTML = `
+    <div class="fade-in space-y-4 pb-4">
+      <div class="grid grid-cols-2 gap-3">${kpiHtml}</div>
+      <div class="grid grid-cols-2 gap-3">${actionHtml}</div>
+      <div>
+        <h3 class="text-sm font-semibold text-slate-700 mb-2 flex items-center justify-between">
+          <span>最近订单</span>
+          <button onclick="switchMobileTab('sales')" class="text-xs text-teal-600">查看全部</button>
+        </h3>
+        <div class="space-y-3">${recentHtml}</div>
+      </div>
+      ${(alerts.alerts || []).length ? `<div><h3 class="text-sm font-semibold text-slate-700 mb-2">智能预警</h3><div class="space-y-3">${alertHtml}</div></div>` : ''}
+    </div>`;
+}
+
+// ---- 移动端：销售订单卡片 ----
+let _mobileSalesFilter = 'all';
+function renderMobileSales() {
+  const container = document.getElementById('page-content');
+  if (!container) return;
+
+  const norm = (data.salesOrders || []).filter(isOrderVisibleToCurrentUser).map(o => ({
+    ...o,
+    orderNo: o.orderNo || o.orderNumber || o.order_number || '',
+    orderDate: o.orderDate || o.order_date || (o.createdAt || '').slice(0, 10) || '',
+    totalAmount: Number(o.totalAmount ?? o.total_amount ?? 0)
+  }));
+
+  const filters = [
+    { key: 'all', label: '全部' },
+    { key: 'pending', label: '待审核' },
+    { key: 'active', label: '进行中' },
+    { key: 'completed', label: '已完成' }
+  ];
+  const filterFn = {
+    all: () => true,
+    pending: o => o.status === 'pending',
+    active: o => ['approved', 'allocated', 'shipped'].includes(o.status),
+    completed: o => o.status === 'completed'
+  }[_mobileSalesFilter] || (() => true);
+
+  const list = norm.filter(filterFn).slice().sort((a, b) => String(b.orderDate).localeCompare(String(a.orderDate))).slice(0, 20);
+  const chips = filters.map(f => `
+    <button onclick="_mobileSalesFilter='${f.key}';renderMobileSales()" class="flex-shrink-0 px-3 py-1.5 rounded-full text-xs font-medium border ${_mobileSalesFilter === f.key ? 'bg-teal-500 text-white border-teal-500' : 'bg-white text-slate-600 border-slate-200'}">${f.label}</button>`).join('');
+
+  const cards = list.length ? list.map(o => {
+    const customer = (data.customers || []).find(c => String(c.id) === String(o.customerId || ''));
+    const canApprove = o.status === 'pending' && hasPerm('销售管理', '待审核订单', '审核');
+    const canEdit = o.status === 'pending' && hasPerm('销售管理', '待审核订单', '修改');
+    return `
+      <div class="bg-white rounded-2xl shadow-sm border border-slate-100 p-4">
+        <div class="flex items-center justify-between gap-2">
+          <span class="text-sm font-semibold text-slate-800 truncate">${esc(o.orderNo || '-')}</span>
+          ${mobileStatusBadge(o.status)}
+        </div>
+        <p class="mt-1 text-xs text-slate-500">${esc(customer ? (customer.name || '-') : (o.contactName || '-'))} · ${(o.items || []).length} 项</p>
+        <div class="mt-2 flex items-center justify-between">
+          <span class="text-xs text-slate-400">${esc(o.orderDate || '-')}</span>
+          <span class="text-sm font-bold text-slate-800">${formatCurrency(o.totalAmount)}</span>
+        </div>
+        <div class="mt-3 flex gap-2">
+          <button onclick="viewOrderDetails('${o.id}')" class="flex-1 min-h-[40px] rounded-lg border border-slate-300 text-slate-600 text-sm">详情</button>
+          ${canApprove ? `<button onclick="mobileApproveOrder('${o.id}')" class="flex-1 min-h-[40px] rounded-lg bg-teal-500 text-white text-sm">审核</button>` : ''}
+          ${canEdit ? `<button onclick="editSalesOrder('${o.id}')" class="flex-1 min-h-[40px] rounded-lg border border-blue-300 text-blue-600 text-sm">编辑</button>` : ''}
+        </div>
+      </div>`;
+  }).join('') : '<div class="bg-white rounded-2xl shadow-sm border border-slate-100 p-6 text-center text-sm text-slate-400">暂无订单</div>';
+
+  container.innerHTML = `
+    <div class="fade-in space-y-4 pb-4">
+      <div class="flex gap-2 overflow-x-auto -mx-4 px-4">${chips}</div>
+      <div class="space-y-3">${cards}</div>
+      <div class="text-center">
+        <button onclick="navigateTo('sales')" class="text-sm text-teal-600 py-2">查看全部订单 →</button>
+      </div>
+    </div>`;
+}
+
+// ---- 移动端：采购单卡片 ----
+let _mobilePurchaseFilter = 'all';
+function renderMobilePurchase() {
+  const container = document.getElementById('page-content');
+  if (!container) return;
+
+  const suppliers = Array.isArray(data.suppliers) ? data.suppliers : [];
+  const supName = id => { const s = suppliers.find(x => String(x.id) === String(id)); return s ? (s.name || '') : ''; };
+  const orders = (Array.isArray(data.purchaseOrders) ? data.purchaseOrders : [])
+    .slice().sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+
+  const filters = [
+    { key: 'all', label: '全部' },
+    { key: 'pending', label: '待收货' },
+    { key: 'received', label: '已收货' },
+    { key: 'completed', label: '已结算' }
+  ];
+  const filterFn = {
+    all: () => true,
+    pending: o => o.status === 'pending',
+    received: o => o.status === 'received',
+    completed: o => o.status === 'completed'
+  }[_mobilePurchaseFilter] || (() => true);
+
+  const list = orders.filter(filterFn).slice(0, 20);
+  const chips = filters.map(f => `
+    <button onclick="_mobilePurchaseFilter='${f.key}';renderMobilePurchase()" class="flex-shrink-0 px-3 py-1.5 rounded-full text-xs font-medium border ${_mobilePurchaseFilter === f.key ? 'bg-teal-500 text-white border-teal-500' : 'bg-white text-slate-600 border-slate-200'}">${f.label}</button>`).join('');
+
+  const cards = list.length ? list.map(o => {
+    const amt = Number(o.totalAmount ?? o.total_amount ?? 0);
+    return `
+      <div class="bg-white rounded-2xl shadow-sm border border-slate-100 p-4">
+        <div class="flex items-center justify-between gap-2">
+          <span class="text-sm font-semibold text-slate-800 truncate">${esc(o.orderNo || '-')}</span>
+          ${mobileStatusBadge(o.status, o.status === 'pending' ? '待收货' : undefined)}
+        </div>
+        <p class="mt-1 text-xs text-slate-500">${esc(o.supplierName || o.supplier || supName(o.supplierId) || '-')} · ${esc(o.warehouse || '主仓库')}</p>
+        <div class="mt-2 flex items-center justify-between">
+          <span class="text-xs text-slate-400">${esc(o.orderDate || o.order_date || (o.createdAt || '').slice(0, 10) || '')}</span>
+          <span class="text-sm font-bold text-slate-800">${formatCurrency(amt)}</span>
+        </div>
+        <div class="mt-3 flex flex-wrap gap-2">
+          <button onclick="viewPurchaseDetail('${o.id}')" class="flex-1 min-h-[40px] rounded-lg border border-slate-300 text-slate-600 text-sm">详情</button>
+          ${o.status === 'pending' ? `<button onclick="mobileReceivePurchase('${o.id}')" class="flex-1 min-h-[40px] rounded-lg bg-blue-600 text-white text-sm">收货</button>` : ''}
+          ${o.status === 'pending' ? `<button onclick="mobileCompletePurchase('${o.id}')" class="flex-1 min-h-[40px] rounded-lg bg-emerald-600 text-white text-sm">结算</button>` : ''}
+          ${o.status === 'pending' ? `<button onclick="mobileDeletePurchase('${o.id}')" class="min-h-[40px] px-3 rounded-lg border border-red-300 text-red-600 text-sm">作废</button>` : ''}
+        </div>
+      </div>`;
+  }).join('') : '<div class="bg-white rounded-2xl shadow-sm border border-slate-100 p-6 text-center text-sm text-slate-400">暂无采购单</div>';
+
+  container.innerHTML = `
+    <div class="fade-in space-y-4 pb-4">
+      <div class="flex gap-2 overflow-x-auto -mx-4 px-4">${chips}</div>
+      <div class="space-y-3">${cards}</div>
+      <div class="text-center">
+        <button onclick="navigateTo('purchase')" class="text-sm text-teal-600 py-2">查看全部采购单 →</button>
+      </div>
+    </div>`;
+}
+
+// ---- 移动端：产品库存卡片 ----
+let _mobileInventorySegment = 'product';
+function renderMobileInventory() {
+  const container = document.getElementById('page-content');
+  if (!container) return;
+
+  if (_mobileInventorySegment === 'material') {
+    renderInventoryMaterial(); // 复用现有空态页
+    return;
+  }
+
+  const products = Array.isArray(data.products) ? data.products : [];
+  const segBtn = (key, label) => `<button onclick="_mobileInventorySegment='${key}';renderMobileInventory()" class="flex-1 min-h-[44px] rounded-full text-sm font-medium ${_mobileInventorySegment === key ? 'bg-teal-500 text-white' : 'bg-white text-slate-600 border border-slate-200'}">${label}</button>`;
+
+  const cards = products.length ? products.map(p => {
+    const stock = Number(p.stock || 0);
+    const low = stock <= 0;
+    const price = Number(p.showroomPrice || p.price || 0);
+    return `
+      <div class="bg-white rounded-2xl shadow-sm border border-slate-100 p-4">
+        <div class="flex items-center justify-between gap-2">
+          <div class="min-w-0">
+            <p class="text-sm font-semibold text-slate-800 truncate">${esc(p.type || p.name || '-')}</p>
+            <p class="text-xs text-slate-400 truncate">${esc(p.model || p.sku || '')}${p.color ? ' · ' + esc(p.color) : ''}${p.spec ? ' · ' + esc(p.spec) : ''}</p>
+          </div>
+          <div class="text-right flex-shrink-0">
+            <p class="text-xl font-bold ${low ? 'text-red-500' : 'text-slate-800'}">${stock}</p>
+            <p class="text-[10px] text-slate-400">${esc(p.unit || '件')}</p>
+          </div>
+        </div>
+        <div class="mt-2 flex items-center justify-between text-xs text-slate-500">
+          <span>展厅价 ${formatCurrency(price)}</span>
+          <span>库存金额 ${formatCurrency(stock * price)}</span>
+        </div>
+        ${low ? '<p class="mt-2 text-[11px] text-red-500 font-medium">库存不足，请及时入库</p>' : ''}
+      </div>`;
+  }).join('') : '<div class="bg-white rounded-2xl shadow-sm border border-slate-100 p-6 text-center text-sm text-slate-400">暂无产品数据，请先在资料管理中添加产品</div>';
+
+  container.innerHTML = `
+    <div class="fade-in space-y-4 pb-4">
+      <div class="flex gap-1 bg-slate-100 rounded-full p-1">${segBtn('product', '产品')}${segBtn('material', '材料')}</div>
+      <button onclick="showStockInModal()" class="w-full min-h-[48px] rounded-2xl bg-teal-500 text-white text-sm font-medium">+ 手动入库</button>
+      <div class="space-y-3">${cards}</div>
+    </div>`;
+}
+
+// ---- 移动端：我的 ----
+function renderMobileMe() {
+  const container = document.getElementById('page-content');
+  if (!container) return;
+  const user = currentUser || {};
+  const unread = (notifState && notifState.unread) || 0;
+  const menus = [
+    { label: `消息与待办${unread ? `（${unread} 未读）` : ''}`, icon: 'M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.172V11a6 6 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.172c0 .539-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9', fn: "navigateTo('notifications')" },
+    { label: '系统设置', icon: 'M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z', fn: "navigateTo('settings')" },
+    { label: '关于系统', icon: 'M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z', fn: "showAlertModal('关于', '进销存管理系统 - 全栈版本')" }
+  ];
+  const menuHtml = menus.map(m => `
+    <button onclick="${m.fn}" class="w-full bg-white rounded-2xl shadow-sm border border-slate-100 px-4 py-4 flex items-center gap-3 active:bg-slate-50">
+      <svg class="w-5 h-5 text-teal-600 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="${m.icon}"/></svg>
+      <span class="flex-1 text-left text-sm text-slate-700">${m.label}</span>
+      <svg class="w-4 h-4 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+    </button>`).join('');
+
+  container.innerHTML = `
+    <div class="fade-in space-y-4 pb-4">
+      <div class="bg-white rounded-2xl shadow-sm border border-slate-100 p-5 flex items-center gap-4">
+        <div class="w-14 h-14 rounded-full bg-gradient-to-br from-teal-500 to-cyan-500 flex items-center justify-center text-white text-xl font-bold flex-shrink-0">${esc((user.avatar || (user.name || 'U')).charAt(0))}</div>
+        <div class="min-w-0">
+          <p class="text-base font-semibold text-slate-800 truncate">${esc(user.name || '用户')}</p>
+          <p class="text-xs text-slate-400 truncate">${esc(user.email || '')}</p>
+          <p class="text-xs text-slate-400 truncate">${esc(user.role || '')}</p>
+        </div>
+      </div>
+      <div class="space-y-3">${menuHtml}</div>
+      <button onclick="handleLogout()" class="w-full min-h-[50px] rounded-2xl bg-red-50 border border-red-200 text-red-600 text-sm font-medium">退出登录</button>
+    </div>`;
+}
+
+// ---- 动作包装：操作完成后回到卡片视图 ----
+async function mobileApproveOrder(id) {
+  await approveOrder(id);
+  switchMobileTab('sales');
+}
+async function mobileReceivePurchase(id) {
+  await receivePurchase(id);
+  switchMobileTab('purchase');
+}
+async function mobileCompletePurchase(id) {
+  await completePurchase(id);
+  switchMobileTab('purchase');
+}
+async function mobileDeletePurchase(id) {
+  await deletePurchase(id);
+  switchMobileTab('purchase');
+}
+
+// ---- 复杂功能提示（移动端建议电脑端操作） ----
+function renderDesktopOnlyHint(featureName) {
+  const container = document.getElementById('page-content');
+  if (!container) return;
+  window._mobileHintActive = true; // 提示接管：挂起的桌面渲染应跳过
+  container.innerHTML = `
+    <div class="fade-in flex flex-col items-center justify-center py-16 px-6 text-center">
+      <div class="w-16 h-16 rounded-2xl bg-slate-100 flex items-center justify-center mb-4">
+        <svg class="w-8 h-8 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
+        </svg>
+      </div>
+      <h3 class="text-base font-semibold text-slate-800">${esc(featureName)}</h3>
+      <p class="mt-2 text-sm text-slate-500 leading-relaxed">该功能包含复杂表格与精确操作，建议在<b>电脑端</b>浏览器使用以获得最佳体验。</p>
+      <div class="mt-6 w-full max-w-xs space-y-3">
+        <button onclick="switchMobileTab('home')" class="w-full min-h-[48px] rounded-2xl bg-teal-500 text-white text-sm font-medium">返回首页</button>
+        <button onclick="document.getElementById('sidebar-toggle-btn').click()" class="w-full min-h-[48px] rounded-2xl bg-white border border-slate-200 text-slate-600 text-sm">打开全部功能</button>
+      </div>
+    </div>`;
+}
+
+// ---- 断点穿越监听：手机↔桌面切换时自动切换视图 ----
+let _lastMobileState = null;
+window.addEventListener('resize', () => {
+  const m = isMobile();
+  if (_lastMobileState === null) { _lastMobileState = m; return; }
+  if (_lastMobileState === m) return;
+  _lastMobileState = m;
+  if (m) {
+    switchMobileTab(loadMobileTab());
+  } else {
+    renderPage(loadCurrentPage() || 'dashboard');
+  }
+});
