@@ -22984,15 +22984,26 @@ function renderMobileSales() {
     const customer = (data.customers || []).find(c => String(c.id) === String(o.customerId || ''));
     const canApprove = o.status === 'pending' && hasPerm('销售管理', '待审核订单', '审核');
     const canEdit = o.status === 'pending' && hasPerm('销售管理', '待审核订单', '修改');
+    const customerName = customer ? (customer.name || '-') : '-';
+    const receiverName = o.contactName || o.contact || o.receiver || '-';
     return `
       <div class="bg-white rounded-2xl shadow-sm border border-slate-100 p-4">
         <div class="flex items-center justify-between gap-2">
           <span class="text-sm font-semibold text-slate-800 truncate">${esc(o.orderNo || '-')}</span>
           ${mobileStatusBadge(o.status)}
         </div>
-        <p class="mt-1 text-xs text-slate-500">${esc(customer ? (customer.name || '-') : (o.contactName || '-'))} · ${(o.items || []).length} 项</p>
+        <div class="mt-2 grid grid-cols-2 gap-2">
+          <div class="min-w-0">
+            <div class="text-xs text-slate-400">客户</div>
+            <div class="text-sm text-slate-700 truncate">${esc(customerName)}</div>
+          </div>
+          <div class="min-w-0">
+            <div class="text-xs text-slate-400">收货人</div>
+            <div class="text-sm text-slate-700 truncate">${esc(receiverName)}</div>
+          </div>
+        </div>
         <div class="mt-2 flex items-center justify-between">
-          <span class="text-xs text-slate-400">${esc(o.orderDate || '-')}</span>
+          <span class="text-xs text-slate-400">${esc(o.orderDate || '-')} · ${(o.items || []).length} 项</span>
           <span class="text-sm font-bold text-slate-800">${formatCurrency(o.totalAmount)}</span>
         </div>
         <div class="mt-3 flex gap-2">
