@@ -514,8 +514,9 @@ app.get('/login', (req, res) => {
   res.sendFile(path.join(__dirname, '../public/index.html'));
 });
 
-app.get('/api/data', (req, res) => {
-  // 脱敏：不向前端暴露密码等敏感字段
+app.get('/api/data', requireAdmin, (req, res) => {
+  // 遗留的整库导出接口：仅管理员可见。前端生产路径已改用按集合路由（/api/products 等），
+  // 此处返回全库（含审计日志、角色权限等敏感集合），故收紧为 requireAdmin，避免普通角色过度暴露。
   const copy = JSON.parse(JSON.stringify(data));
   if (Array.isArray(copy.users)) {
     copy.users = copy.users.map(u => {

@@ -166,3 +166,17 @@ test('权限：受限用户仅可读（库存查询查看）不受影响', async
   const r = await api('GET', '/api/stock-in-records', null, limitedToken);
   assert.strictEqual(r.status, 200);
 });
+
+// ---------- 整库接口 /api/data 收紧为仅管理员 ----------
+test('权限：受限用户访问整库接口 /api/data -> 403（全库不向普通角色暴露）', async () => {
+  const r = await api('GET', '/api/data', null, limitedToken);
+  assert.strictEqual(r.status, 403);
+});
+
+test('权限：管理员可访问整库接口 /api/data -> 200 且无密码字段', async () => {
+  const r = await api('GET', '/api/data', null, adminToken);
+  assert.strictEqual(r.status, 200);
+  assert.ok(r.json && r.json.users, '返回 users 集合');
+  const plainLeak = (r.json.users || []).some(u => u.password !== undefined);
+  assert.strictEqual(plainLeak, false, '不应泄露 password 字段');
+});
