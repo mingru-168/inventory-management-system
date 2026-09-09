@@ -542,17 +542,13 @@ app.post('/api/products', requirePerm('资料管理', '产品资料', '添加'),
   };
   // 缺省生成唯一条码（Code128 兼容）
   if (!product.barcode) product.barcode = 'P' + String(product.id);
-  console.log('创建新产品:', product);
   data.products.push(product);
   saveData();
   res.json(product);
 });
 
 app.put('/api/products/:id', requirePerm('资料管理', '产品资料', '编辑'), (req, res) => {
-  console.log('收到更新请求，产品ID:', req.params.id);
-  console.log('当前产品列表:', data.products.map(p => ({ id: p.id, model: p.model })));
   const index = data.products.findIndex(p => String(p.id) === String(req.params.id));
-  console.log('找到的索引:', index);
   if (index !== -1) {
     const allowed = { name: 'string', model: 'string', type: 'string', color: 'string', spec: 'string', tabletopColor: 'string', unit: 'string', packageCount: true, price: true, cost: true, stock: true, warehouse: 'string', minStock: true, sku: 'string', description: 'string', image: 'string', category: 'string', brand: 'string', remark: 'string', barcode: 'string' };
     data.products[index] = {
@@ -560,27 +556,20 @@ app.put('/api/products/:id', requirePerm('资料管理', '产品资料', '编辑
       ...pick(req.body, allowed)
     };
     saveData();
-    console.log('更新成功:', data.products[index]);
     res.json(data.products[index]);
   } else {
-    console.log('未找到产品');
     res.status(404).json({ error: 'Product not found' });
   }
 });
 
 app.delete('/api/products/:id', requirePerm('资料管理', '产品资料', '删除'), (req, res) => {
-  console.log('收到删除请求，产品ID:', req.params.id);
-  console.log('当前产品列表:', data.products.map(p => p.id));
   const index = data.products.findIndex(item => item.id == req.params.id);
-  console.log('找到的索引:', index);
   
   if (index !== -1) {
     const deleted = data.products.splice(index, 1)[0];
     saveData();
-    console.log('成功删除产品:', deleted);
     res.json(deleted);
   } else {
-    console.log('未找到产品，返回404');
     res.status(404).json({ error: 'Product not found' });
   }
 });
