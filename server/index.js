@@ -13,7 +13,6 @@ app.disable('x-powered-by'); // 隐藏框架标识，降低指纹信息泄露
 
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ limit: '50mb', extended: true }));
 app.use(express.static(path.join(__dirname, '../public')));
 
 // ===== 安全加固：请求体消毒（body 边界类型校验 + 原型污染防护） =====
