@@ -5,6 +5,8 @@ node_modules/
 server/data.json
 server/sessions.json
 server/backups/
+server/backups/.pre-hash-originals/  # 含明文密码的原始备份（仅供本地回滚，严禁提交）
+server/_hash_backups.js
 *.log
 npm-debug.log*
 
