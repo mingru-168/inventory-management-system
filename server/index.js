@@ -87,6 +87,26 @@ function pick(body, allowed) {
   return out;
 }
 
+// ===== 财务凭证生成助手：统一结构 + 凭证语义字段，向后兼容现有 type/category 聚合统计 =====
+function createFinanceVoucher(o) {
+  return {
+    id: generateId(),
+    type: o.type,                 // 'income' | 'expense'（保持统计口径）
+    category: o.category,         // 分类（保持统计口径）
+    amount: o.amount,
+    date: o.date,
+    description: o.description,
+    relatedOrderId: o.relatedOrderId,
+    voucherNo: o.voucherNo || generateOrderNo('VJ', data.financeRecords, 'voucherNo'),
+    eventType: o.eventType,       // purchase_order / purchase_receive / purchase_return
+    direction: o.direction,       // payable(应付) / refund(红冲)
+    accountCode: o.accountCode,   // 科目代码 + 名称
+    status: o.status || 'created',// created / received / returned
+    operator: o.operator || '',
+    createdAt: new Date().toISOString()
+  };
+}
+
 const initialData = {
   products: [
     { id: 'p1', name: '茶几', model: '6351', type: '茶几', color: '灰色', spec: '130*70cm,120*60cm', tabletopColor: '雪山白', unit: '套', packageCount: 1, price: 800, cost: 400, stock: 10, warehouse: '主仓库' },
@@ -151,7 +171,7 @@ function ensureDataIntegrity(obj) {
     'stockInRecords', 'productSpecPrices', 'users', 'roles', 'allocationRecords',
     'orderTrackingRecords', 'inventoryLocks', 'auditLogs', 'exchangeRecords', 'purchaseReturns',
     'notifications', 'warehouseLocations', 'stockOutRecords', 'warehouseTransfers', 'stocktakes',
-    'bomConfigs'
+    'bomConfigs', 'salesReturns', 'materialRequisitions'
   ];
   collections.forEach(k => {
     if (!Array.isArray(obj[k])) obj[k] = [];
@@ -990,7 +1010,7 @@ app.get('/api/dashboard', (req, res) => {
 
 // ===== 数据导出（CSV，带 UTF-8 BOM 兼容 Excel） =====
 // 仅允许导出白名单集合，防止路径/任意键遍历；对 users 做脱敏（去除 password）
-const EXPORTABLE_COLLECTIONS = ['products', 'inventory', 'warehouses', 'customers', 'suppliers', 'salesOrders', 'purchaseOrders', 'planOrders', 'financeRecords', 'stockInRecords', 'productSpecPrices', 'productionOrders', 'allocationRecords', 'orderTrackingRecords', 'users', 'roles'];
+const EXPORTABLE_COLLECTIONS = ['products', 'inventory', 'warehouses', 'customers', 'suppliers', 'salesOrders', 'purchaseOrders', 'planOrders', 'financeRecords', 'stockInRecords', 'productSpecPrices', 'productionOrders', 'allocationRecords', 'orderTrackingRecords', 'salesReturns', 'materialRequisitions', 'users', 'roles'];
 function toCsvCell(val) {
   if (val === null || val === undefined) return '';
   if (typeof val === 'object') {
@@ -1041,15 +1061,19 @@ app.post('/api/sales-orders', requirePerm('销售管理', '销售订单', '添�
   };
   data.salesOrders.push(order);
   
-  data.financeRecords.push({
-    id: generateId(),
+  data.financeRecords.push(createFinanceVoucher({
     type: 'income',
     category: '销售收入',
     amount: Number(order.totalAmount ?? order.total_amount ?? order.final_amount ?? order.amount ?? 0),
     date: order.orderDate || order.order_date || new Date().toISOString().slice(0, 10),
     description: `销售订单 ${order.orderNo}`,
-    relatedOrderId: order.id
-  });
+    relatedOrderId: order.id,
+    eventType: 'sales_order',
+    direction: '应收',
+    accountCode: '1122 应收账款',
+    status: 'created',
+    operator: req.user?.name || ''
+  }));
   
   order.items.forEach(item => {
     const inv = data.inventory.find(i => i.productId === item.productId);
@@ -1362,6 +1386,14 @@ app.post('/api/allocate-order/:id', requirePerm('销售管理', '销售发货', 
   order.status = 'allocated';
   order.allocatedAt = new Date().toISOString();
   
+  // 凭证化：创建销售订单时已确认收入凭证，发货时将对应凭证标记为已配货/确认（不新增金额流水，避免收入重复计数）
+  const saleVoucher = (data.financeRecords || []).find(r => r.relatedOrderId === order.id && r.eventType === 'sales_order');
+  if (saleVoucher) {
+    saleVoucher.status = 'allocated';
+    saleVoucher.allocatedAt = new Date().toISOString();
+    saleVoucher.description = `${saleVoucher.description || '销售'} 已发货`;
+  }
+  
   saveData();
   res.json({
     allocatedItems,
@@ -1372,6 +1404,118 @@ app.post('/api/allocate-order/:id', requirePerm('销售管理', '销售发货', 
 
 app.get('/api/allocation-records', (req, res) => {
   res.json(data.allocationRecords || []);
+});
+
+// 按单收款：校验并累加 paidAmount，生成"销售收现"资金流水（不重复计收入），收满则订单置为已付
+app.post('/api/sales-orders/:id/receive-payment', requirePerm('销售管理', '应收款管理', '收款'), (req, res) => {
+  const order = data.salesOrders.find(o => String(o.id) === String(req.params.id));
+  if (!order) return res.status(404).json({ success: false, message: '订单不存在' });
+  const amt = Number(req.body.amount);
+  if (!(amt > 0)) return res.status(400).json({ success: false, message: '请输入有效的收款金额' });
+  const total = Number(order.totalAmount ?? order.amount ?? 0);
+  const paid = Number(order.paidAmount) || 0;
+  if (total > 0 && paid + amt > total + 0.001) {
+    return res.status(400).json({ success: false, message: '收款金额超出订单未收金额' });
+  }
+  order.paidAmount = paid + amt;
+  if (total > 0 && order.paidAmount >= total - 0.001) order.status = 'paid';
+  const method = String(req.body.method || req.body.payType || '现金');
+  const accountCode = /银行|转账|转账/.test(method) ? '1002 银行存款' : '1001 现金';
+  data.financeRecords.push(createFinanceVoucher({
+    type: '',           // 收还不改变利润，type 置空避免与发货收入重复计数
+    category: '销售收现',
+    amount: amt,
+    date: String(req.body.date || new Date().toISOString().slice(0, 10)),
+    description: `订单 ${order.orderNo || ''} 收款 ${amt} 元`,
+    relatedOrderId: order.id,
+    eventType: 'sales_received', direction: '收现',
+    accountCode, status: 'received',
+    operator: req.user?.name || ''
+  }));
+  order.updatedAt = new Date().toISOString();
+  saveData();
+  logAudit('销售收款', `订单 ${order.orderNo || ''} 收款 ${amt} 元（方式：${method}）`, req.user?.name);
+  res.json({ success: true, order, paidAmount: order.paidAmount });
+});
+
+// ===== 销售退货 API =====
+app.get('/api/sales-returns', (req, res) => {
+  let list = data.salesReturns || [];
+  if (req.query.orderId) list = list.filter(r => String(r.salesOrderId) === String(req.query.orderId));
+  if (req.query.orderNo) list = list.filter(r => String(r.orderNo) === String(req.query.orderNo));
+  res.json(list);
+});
+
+app.post('/api/sales-returns', requirePerm('销售管理', '销售退货', '退货'), (req, res) => {
+  const productId = String(req.body.productId || req.body.product_id || '');
+  const qty = Number(req.body.quantity);
+  if (!productId || !(qty > 0)) {
+    return res.status(400).json({ success: false, message: '请选择产品并填写正确的退货数量' });
+  }
+
+  const salesOrderId = String(req.body.salesOrderId || req.body.orderId || '');
+  const order = data.salesOrders.find(o => String(o.id) === String(salesOrderId));
+  const product = data.products.find(p => String(p.id) === String(productId));
+
+  // 关联订单/产品单价，用于估算退货金额（负值冲减销售收入）
+  let unitPrice = Number(req.body.unitPrice) || 0;
+  if (!unitPrice && order && Array.isArray(order.items)) {
+    const line = order.items.find(it => String(it.productId) === String(productId));
+    if (line) unitPrice = Number(line.unitPrice ?? line.price ?? 0);
+  }
+  if (!unitPrice && product) unitPrice = Number(product.price ?? product.cost ?? 0);
+  if (!(unitPrice > 0)) unitPrice = 0;
+
+  // 回补库存
+  let inv = data.inventory.find(i => String(i.productId) === String(productId));
+  if (!inv) {
+    inv = { id: generateId(), productId, quantity: 0, minStock: 0, warehouse: String(req.body.warehouse || '主仓库') };
+    data.inventory.push(inv);
+  }
+  inv.quantity = (Number(inv.quantity) || 0) + qty;
+  inv.updatedAt = new Date().toISOString();
+  if (product) {
+    product.stock = (Number(product.stock) || 0) + qty;
+    product.updatedAt = new Date().toISOString();
+  }
+
+  const returnAmount = qty * unitPrice;
+  data.financeRecords.push(createFinanceVoucher({
+    type: 'income',
+    category: '销售退货(红冲)',
+    amount: -returnAmount,          // 负值，与原销售收入同科目，净额正确
+    date: String(req.body.date || new Date().toISOString().slice(0, 10)),
+    description: `销售退货 ${product?.name || productId} ${qty} 件`,
+    relatedOrderId: salesOrderId,
+    eventType: 'sales_return',
+    direction: '红冲',
+    accountCode: '1122 应收账款',
+    status: 'returned',
+    operator: req.user?.name || ''
+  }));
+
+  const returnRec = {
+    id: generateId(),
+    returnNo: generateOrderNo('TH', data.salesReturns, 'returnNo'),
+    salesOrderId,
+    orderNo: order?.orderNo || '',
+    productId,
+    productName: String(req.body.productName || product?.name || ''),
+    productModel: String(req.body.productModel || product?.model || ''),
+    quantity: qty,
+    unitPrice,
+    amount: returnAmount,
+    returnType: String(req.body.returnType || '退货'),
+    returnReason: String(req.body.returnReason || req.body.remark || ''),
+    warehouse: inv.warehouse,
+    operator: req.user ? (req.user.username || '') : '',
+    createdAt: new Date().toISOString()
+  };
+  data.salesReturns.push(returnRec);
+
+  saveData();
+  logAudit('销售退货', `产品 ${product?.name || productId} 退货 ${qty} 件，红冲 ${returnAmount} 元`, req.user?.name);
+  res.json({ success: true, record: returnRec });
 });
 
 app.get('/api/allocation-records/order/:orderId', (req, res) => {
@@ -1464,15 +1608,19 @@ app.post('/api/purchase-orders', requirePerm('采购管理', '采购订单', '�
   };
   data.purchaseOrders.push(order);
   
-  data.financeRecords.push({
-    id: generateId(),
+  data.financeRecords.push(createFinanceVoucher({
     type: 'expense',
     category: '采购支出',
     amount: Number(order.totalAmount ?? order.total_amount ?? order.final_amount ?? order.amount ?? 0),
     date: order.orderDate || order.order_date || new Date().toISOString().slice(0, 10),
     description: `采购订单 ${order.orderNo}`,
-    relatedOrderId: order.id
-  });
+    relatedOrderId: order.id,
+    eventType: 'purchase_order',
+    direction: '应付',
+    accountCode: '2202 应付账款',
+    status: 'created',
+    operator: req.user?.name || ''
+  }));
   
   saveData();
   logAudit('创建采购订单', `采购订单 ${order.orderNo} 已创建`, req.user?.name);
@@ -1584,6 +1732,14 @@ app.post('/api/purchase-orders/:id/receive', requirePerm('采购管理', '采购
   order.receivedAt = new Date().toISOString();
   order.receivedBy = req.user ? (req.user.username || '') : '';
   order.updatedAt = new Date().toISOString();
+  // 凭证化：将创建采购单时生成的"采购支出"凭证标记为已收货/成本确认（不新增金额流水，避免重复计数）
+  const pv = (data.financeRecords || []).find(r => r.relatedOrderId === order.id && r.eventType === 'purchase_order');
+  if (pv) {
+    pv.status = 'received';
+    pv.receivedAt = new Date().toISOString();
+    if (req.body.actualAmount != null) pv.amount = Number(req.body.actualAmount) || pv.amount;
+    pv.description = `${pv.description || '采购'} 已收货`;
+  }
   saveData();
   logAudit('采购收货', `采购单 ${order.orderNo} 已收货入库`, req.user?.name);
   res.json({ success: true, order });
@@ -1617,15 +1773,19 @@ app.post('/api/purchase-returns', requirePerm('采购管理', '采购退货', '�
   }
 
   const returnAmount = -1 * Math.abs(qty) * Math.abs(unitEstimate);
-  data.financeRecords.push({
-    id: generateId(),
+  data.financeRecords.push(createFinanceVoucher({
     type: 'expense',
     category: '采购退货(红冲)',
-    amount: returnAmount,
+    amount: returnAmount,   // 负值，与原采购支出同科目，净额正确
     date: new Date().toISOString().slice(0, 10),
     description: `采购退货 ${qty} 件`,
-    relatedOrderId: String(req.body.purchaseOrderId || '')
-  });
+    relatedOrderId: String(req.body.purchaseOrderId || ''),
+    eventType: 'purchase_return',
+    direction: '红冲',
+    accountCode: '2202 应付账款',
+    status: 'returned',
+    operator: req.user?.name || ''
+  }));
 
   const returnRec = {
     id: generateId(),
@@ -1837,6 +1997,120 @@ app.delete('/api/bom-configs/:id', requirePerm('采购管理', '材料审核', '
   saveData();
   logAudit('BOM删除', `删除 BOM ${deleted.productModel} ${deleted.productName}`, req.user && req.user.name);
   res.json(deleted);
+});
+
+// ==================== 生产领料 API ====================
+app.get('/api/material-requisitions', (req, res) => {
+  let list = data.materialRequisitions || [];
+  if (req.query.planOrderId) list = list.filter(r => String(r.planOrderId) === String(req.query.planOrderId));
+  if (req.query.orderNo) list = list.filter(r => String(r.orderNo) === String(req.query.orderNo));
+  res.json(list);
+});
+
+app.post('/api/material-requisitions', requirePerm('库存管理', '库存调整', '材料领用'), (req, res) => {
+  const finishedQty = Number(req.body.quantity);
+  if (!(finishedQty > 0)) {
+    return res.status(400).json({ success: false, message: '请填写正确的完工数量' });
+  }
+
+  // 定位计划订单（取成品型号/名称用于匹配 BOM）
+  const planOrderId = String(req.body.planOrderId || req.body.id || '');
+  const planOrder = planOrderId ? data.planOrders.find(o => String(o.id) === String(planOrderId)) : null;
+  const productModel = String(req.body.productModel || planOrder?.productModel || '');
+  const productName = String(req.body.productName || planOrder?.productName || '');
+  if (!productModel && !productName) {
+    return res.status(400).json({ success: false, message: '请选择计划订单或填写成品型号/名称' });
+  }
+
+  // 匹配 BOM 配置
+  const bom = (data.bomConfigs || []).find(b =>
+    (productModel && b.productModel === productModel) ||
+    (!productModel && productName && b.productName === productName)
+  );
+  if (!bom || !Array.isArray(bom.materials) || bom.materials.length === 0) {
+    return res.status(400).json({ success: false, message: '未找到该成品的 BOM 配置，请先在「材料审核」中配置' });
+  }
+  const warehouse = String(req.body.warehouse || '主仓库');
+
+  // 逐材料计算需求并在扣减前全量校验库存，避免部分操作
+  const lines = [];
+  for (const m of bom.materials) {
+    const unit = Number(m.quantity) || 0;
+    const need = unit * finishedQty;
+    if (need <= 0) continue;
+    const inv = (data.inventory || []).find(i => String(i.warehouse || '主仓库') === warehouse &&
+      ((m.name && String(i.productName || '') === String(m.name)) ||
+       (m.model && String(i.productModel || '') === String(m.model)) ||
+       (m.type && String(i.productName || '') === String(m.type))));
+    const available = inv ? (Number(inv.quantity) || 0) : 0;
+    if (available < need) {
+      return res.status(400).json({ success: false, message: `材料「${m.name || m.model || m.type || ''}」库存不足：需要 ${need}，当前 ${available}` });
+    }
+    lines.push({ materialName: String(m.name || ''), materialModel: String(m.model || ''), unit, need, available, inventoryId: inv ? inv.id : '' });
+  }
+  if (lines.length === 0) {
+    return res.status(400).json({ success: false, message: 'BOM 未包含有效的材料行' });
+  }
+
+  // 校验通过后统一扣减库存 + 生成出库记录
+  const requisitionNo = generateOrderNo('LY', data.materialRequisitions, 'requisitionNo');
+  const items = lines.map(l => {
+    const inv = (data.inventory || []).find(i => String(i.id) === String(l.inventoryId));
+    if (inv) {
+      inv.quantity -= l.need;
+      inv.updatedAt = new Date().toISOString();
+    }
+    const prod = (data.products || []).find(p => String(p.id) === String(inv?.productId));
+    if (prod) prod.stock = (Number(prod.stock) || 0) - l.need;
+    return {
+      materialName: l.materialName,
+      materialModel: l.materialModel,
+      neededQty: l.need,
+      unit: Number(l.unit) || 1,
+      inventoryId: l.inventoryId || '',
+      productId: inv?.productId || ''
+    };
+  });
+
+  const requisition = {
+    id: generateId(),
+    requisitionNo,
+    planOrderId,
+    orderNo: planOrder?.orderNo || '',
+    productModel,
+    productName,
+    finishedQty,
+    items,
+    warehouse,
+    remark: String(req.body.remark || ''),
+    operator: req.user ? (req.user.username || '') : '',
+    status: 'issued',
+    createdAt: new Date().toISOString()
+  };
+  data.materialRequisitions.push(requisition);
+
+  items.forEach(it => {
+    data.stockOutRecords.push({
+      id: generateId(),
+      stockOutNo: generateOrderNo('CK', data.stockOutRecords, 'stockOutNo'),
+      productId: it.productId || '',
+      productName: it.materialName,
+      productModel: it.materialModel,
+      quantity: it.neededQty,
+      warehouse,
+      location: '',
+      type: '生产领料',
+      requisitionNo,
+      planOrderId,
+      remark: `领料单 ${requisitionNo}`,
+      operator: requisition.operator,
+      createdAt: new Date().toISOString()
+    });
+  });
+
+  saveData();
+  logAudit('生产领料', `领料单 ${requisitionNo}：成品 ${productName || productModel} x ${finishedQty}，共 ${items.length} 种材料`, req.user?.name);
+  res.json({ success: true, record: requisition });
 });
 
 // ==================== 仓库调拨/移库 API ====================
@@ -2901,6 +3175,23 @@ app.put('/api/processes/:id/complete', requirePerm('生产管理', '完工确认
     const product = data.products.find(p => String(p.id) === String(planOrder.productId));
     if (product) {
       product.stock = (product.stock || 0) + planOrder.quantity;
+    }
+    
+    // 凭证化：登记生产成本（计入支出，利润口径=收入−采购−生产成本）
+    const costProduct = data.products.find(p => String(p.id) === String(planOrder.productId));
+    const unitCost = Number(costProduct?.cost) || 0;
+    const prodQty = Number(planOrder.quantity) || 0;
+    if (unitCost > 0 && prodQty > 0) {
+      data.financeRecords.push(createFinanceVoucher({
+        type: 'expense', category: '生产成本',
+        amount: unitCost * prodQty,
+        date: new Date().toISOString().slice(0, 10),
+        description: `生产入库 ${planOrder.productName || ''} ${prodQty} 件`,
+        relatedOrderId: planOrder.id,
+        eventType: 'production_complete', direction: '成本',
+        accountCode: '1405 存货', status: 'completed',
+        operator: req.user?.name || ''
+      }));
     }
     
     // 自动配货

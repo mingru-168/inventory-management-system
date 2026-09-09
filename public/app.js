@@ -185,7 +185,8 @@ const SUBMENU_ITEM_MAP = {
   '销售管理': {
     '销售订单': ['创建销售订单', '销售订单列表', '批量导入'],
     '待审核订单': ['待审核订单'],
-    '销售发货': ['按产品发货', '按订单发货', '已发货列表', '收单']
+    '销售发货': ['按产品发货', '按订单发货', '已发货列表', '收单'],
+    '销售退货': ['销售退货']
   },
   '生产管理': {
     '计划订单': ['创建计划订单', '计划订单列表', '计划订单导入'],
@@ -1664,7 +1665,7 @@ function getSupplierName(id) {
 async function fetchData() {
   // console.log('fetchData started - loading all data from backend database');
   try {
-    const [products, inventory, customers, suppliers, salesOrders, purchaseOrders, financeRecords, users, roles, stockInRecords, planOrders, processes, warehouseLocations, stockOutRecords, warehouseTransfers, stocktakes, bomConfigs] = await Promise.all([
+    const [products, inventory, customers, suppliers, salesOrders, purchaseOrders, financeRecords, users, roles, stockInRecords, planOrders, processes, warehouseLocations, stockOutRecords, warehouseTransfers, stocktakes, bomConfigs, salesReturns, materialRequisitions] = await Promise.all([
       fetch('/api/products').then(r => r.json()),
       fetch('/api/inventory').then(r => r.json()),
       fetch('/api/customers').then(r => r.json()),
@@ -1681,10 +1682,12 @@ async function fetchData() {
       fetch('/api/stock-out-records').then(r => r.json()),
       fetch('/api/warehouse-transfers').then(r => r.json()),
       fetch('/api/stocktakes').then(r => r.json()),
-      fetch('/api/bom-configs').then(r => r.json())
+      fetch('/api/bom-configs').then(r => r.json()),
+      fetch('/api/sales-returns').then(r => r.json()),
+      fetch('/api/material-requisitions').then(r => r.json())
     ]);
     
-    data = { products, inventory, customers, suppliers, salesOrders, purchaseOrders, financeRecords, users, roles, stockRecords: [], stockInRecords, planOrders, processes, warehouseLocations, stockOutRecords, warehouseTransfers, stocktakes, bomConfigs };
+    data = { products, inventory, customers, suppliers, salesOrders, purchaseOrders, financeRecords, users, roles, stockRecords: [], stockInRecords, planOrders, processes, warehouseLocations, stockOutRecords, warehouseTransfers, stocktakes, bomConfigs, salesReturns, materialRequisitions };
     
     // 仓位数据已上后端：本地变量同步后端集合（迁移旧的 localStorage 仓位）
     locationData = Array.isArray(warehouseLocations) ? warehouseLocations : [];
@@ -2124,6 +2127,9 @@ async function renderSales() {
           renderShippingByOrder();
         }
       }, 100);
+      break;
+    case 'return':
+      renderSalesReturn();
       break;
     case 'create':
     default:
@@ -8675,6 +8681,9 @@ async function switchInventoryTab(tab) {
     case 'product-check': renderStocktake(); break;
     case 'product-label': renderBarcodeLabel(); break;
     case 'material-transfer': renderWarehouseTransfer(); break;
+    case 'material-pick-order': renderMaterialRequisitionByOrder(); break;
+    case 'material-pick-query': renderMaterialRequisitionQuery(); break;
+    case 'material-pick': renderMaterialRequisitionByOrder(); break;
     case 'scan-query': renderScanQuery(); break;
     case 'scan-inout': renderScanInOut(); break;
   }
@@ -8763,6 +8772,190 @@ async function submitWarehouseTransfer() {
   } catch (e) {
     showAlertModal('错误', '调拨失败：' + e.message);
   }
+}
+
+// ==================== 生产领料（按订单领料 / 领料单查询）====================
+function renderMaterialRequisitionByOrder() {
+  document.getElementById('page-title').textContent = '按订单领料';
+  document.getElementById('page-subtitle').textContent = '根据计划订单与 BOM 自动推导用料并扣减材料库存';
+
+  const container = document.getElementById('page-content');
+  if (!container) return;
+
+  const planOptions = (data.planOrders || []).filter(p => p.status === 'pending' || p.status === 'in_production').map(p =>
+    `<option value="${esc(String(p.id))}" data-model="${esc(p.productModel || '')}" data-name="${esc(p.productName || '')}">${esc(p.orderNo || p.id)}（${esc(p.productName || p.productModel || '-')}，${Number(p.quantity) || 0} 件）</option>`
+  ).join('') || '<option value="">暂无进行中的计划订单</option>';
+
+  const whOptions = (warehouseData || []).map(w => `<option value="${esc(w.name)}">${esc(w.name)}</option>`).join('') || '<option value="主仓库">主仓库</option>';
+
+  container.innerHTML = `
+    <div class="fade-in text-xs">
+      <div class="bg-white border border-slate-200 rounded-lg p-4 mb-4">
+        <div class="grid grid-cols-2 md:grid-cols-3 gap-3 mb-3">
+          <div><label class="block text-xs text-slate-500 mb-1">计划订单</label><select id="mr_planOrder" class="w-full px-2 py-1.5 border border-slate-200 rounded text-sm">${planOptions}</select></div>
+          <div><label class="block text-xs text-slate-500 mb-1">完工数量</label><input id="mr_quantity" type="number" min="1" class="w-full px-2 py-1.5 border border-slate-200 rounded text-sm" placeholder="本次完工/投产数量"></div>
+          <div><label class="block text-xs text-slate-500 mb-1">领料仓库</label><select id="mr_warehouse" class="w-full px-2 py-1.5 border border-slate-200 rounded text-sm">${whOptions}</select></div>
+          <div class="col-span-2"><label class="block text-xs text-slate-500 mb-1">备注</label><input id="mr_remark" type="text" class="w-full px-2 py-1.5 border border-slate-200 rounded text-sm" placeholder="选填"></div>
+        </div>
+        <button onclick="previewMaterialRequisition()" class="px-4 py-2 bg-teal-500 text-white rounded text-xs hover:bg-teal-600">推导用料</button>
+        <button onclick="submitMaterialRequisition()" class="px-4 py-2 ml-2 bg-indigo-500 text-white rounded text-xs hover:bg-indigo-600" data-perm="库存管理-库存调整-材料领用">确认领料</button>
+      </div>
+      <div class="bg-white border border-slate-200 rounded-lg overflow-hidden">
+        <div class="px-4 py-3 border-b border-slate-200 font-medium text-slate-700">推导用料明细（确认后扣减库存）</div>
+        <table class="w-full">
+          <thead class="bg-slate-50"><tr>
+            <th class="px-3 py-2 text-left text-xs text-slate-600">材料名称</th>
+            <th class="px-3 py-2 text-left text-xs text-slate-600">型号</th>
+            <th class="px-3 py-2 text-left text-xs text-slate-600">单位用量</th>
+            <th class="px-3 py-2 text-left text-xs text-slate-600">需求数量</th>
+            <th class="px-3 py-2 text-left text-xs text-slate-600">当前库存</th>
+          </tr></thead>
+          <tbody id="mr-preview-tbody" class="divide-y divide-slate-100">
+            <tr><td colspan="5" class="px-3 py-4 text-center text-xs text-slate-400">请选择计划订单并点击「推导用料」查看明细</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
+// 前端本地推导：依据 BOM 计算明细并校验库存（仅展示，真正扣减以后端为准）
+function previewMaterialRequisition() {
+  const sel = document.getElementById('mr_planOrder');
+  const qty = Number(document.getElementById('mr_quantity').value);
+  if (!qty || qty <= 0) { showAlertModal('提示', '请输入完工数量'); return; }
+  const opt = sel && sel.selectedOptions[0];
+  const model = opt ? opt.getAttribute('data-model') : '';
+  const name = opt ? opt.getAttribute('data-name') : '';
+  const bom = (data.bomConfigs || []).find(b => (model && b.productModel === model) || (!model && name && b.productName === name));
+  if (!bom || !Array.isArray(bom.materials) || bom.materials.length === 0) {
+    showAlertModal('提示', '未找到该成品的 BOM 配置，请先在「材料审核」中配置');
+    return;
+  }
+  const wh = document.getElementById('mr_warehouse').value;
+  const rows = bom.materials.map(m => {
+    const need = (Number(m.quantity) || 0) * qty;
+    const inv = (data.inventory || []).find(i => (i.warehouse || '主仓库') === wh &&
+      ((m.name && i.productName === m.name) || (m.model && i.productModel === m.model) || (m.type && i.productName === m.type)));
+    const avail = inv ? (Number(inv.quantity) || 0) : 0;
+    const status = avail < need ? '<span class="text-red-500">不足</span>' : '<span class="text-emerald-600">充足</span>';
+    return `<tr class="hover:bg-slate-50">
+      <td class="px-3 py-2 text-xs text-slate-800">${esc(m.name || '-')}</td>
+      <td class="px-3 py-2 text-xs text-slate-600">${esc(m.model || '-')}</td>
+      <td class="px-3 py-2 text-xs text-slate-600">${Number(m.quantity) || 0}</td>
+      <td class="px-3 py-2 text-xs text-slate-800">${need.toFixed(2)} ${status}</td>
+      <td class="px-3 py-2 text-xs text-slate-600">${avail}</td>
+    </tr>`;
+  }).join('');
+  const tb = document.getElementById('mr-preview-tbody');
+  if (tb) tb.innerHTML = rows;
+  showSuccessModal('推算完成，请核对用料明细');
+}
+
+async function submitMaterialRequisition() {
+  const sel = document.getElementById('mr_planOrder');
+  const planOrderId = sel.value;
+  const quantity = Number(document.getElementById('mr_quantity').value);
+  const warehouse = document.getElementById('mr_warehouse').value;
+  const remark = document.getElementById('mr_remark').value.trim();
+  if (!planOrderId) { showAlertModal('提示', '请选择计划订单'); return; }
+  if (!(quantity > 0)) { showAlertModal('提示', '请输入完工数量'); return; }
+  const opt = sel.selectedOptions[0];
+  const payload = {
+    planOrderId,
+    quantity,
+    warehouse,
+    remark,
+    productModel: opt ? opt.getAttribute('data-model') : '',
+    productName: opt ? opt.getAttribute('data-name') : ''
+  };
+  try {
+    const resp = await fetch('/api/material-requisitions', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const result = await resp.json();
+    if (!resp.ok) { showAlertModal('提示', result.message || '领料失败：' + (result.error || '请检查材料库存')); return; }
+    showSuccessModal('领料成功：已扣减材料库存并生成领料单');
+    await fetchData();
+    switchInventoryTab('material-pick-query');
+  } catch (e) {
+    showAlertModal('错误', '领料失败：' + e.message);
+  }
+}
+
+function renderMaterialRequisitionQuery() {
+  document.getElementById('page-title').textContent = '领料单查询';
+  document.getElementById('page-subtitle').textContent = '查询生产领料单及其用料明细';
+
+  const container = document.getElementById('page-content');
+  if (!container) return;
+
+  const list = data.materialRequisitions || [];
+  container.innerHTML = `
+    <div class="fade-in text-xs">
+      <div class="bg-white border border-slate-200 rounded-lg overflow-hidden">
+        <div class="flex items-center justify-between px-4 py-3 border-b border-slate-200">
+          <div class="font-medium text-slate-700">领料单列表</div>
+          <span class="text-xs text-slate-400">共 ${list.length} 张</span>
+        </div>
+        <table class="w-full">
+          <thead class="bg-slate-50"><tr>
+            <th class="px-3 py-2 text-left text-xs text-slate-600">领料单号</th>
+            <th class="px-3 py-2 text-left text-xs text-slate-600">计划单号</th>
+            <th class="px-3 py-2 text-left text-xs text-slate-600">成品</th>
+            <th class="px-3 py-2 text-left text-xs text-slate-600">完工数量</th>
+            <th class="px-3 py-2 text-left text-xs text-slate-600">材料种数</th>
+            <th class="px-3 py-2 text-left text-xs text-slate-600">仓库</th>
+            <th class="px-3 py-2 text-left text-xs text-slate-600">状态</th>
+            <th class="px-3 py-2 text-left text-xs text-slate-600">操作人</th>
+            <th class="px-3 py-2 text-left text-xs text-slate-600">时间</th>
+          </tr></thead>
+          <tbody class="divide-y divide-slate-100">
+            ${list.slice().reverse().slice(0, 50).map(r => `
+              <tr class="hover:bg-slate-50">
+                <td class="px-3 py-2 text-xs text-indigo-600 underline cursor-pointer" onclick="showMaterialRequisitionDetail('${esc(String(r.id))}')">${esc(r.requisitionNo || '-')}</td>
+                <td class="px-3 py-2 text-xs text-slate-600">${esc(r.orderNo || '-')}</td>
+                <td class="px-3 py-2 text-xs text-slate-800">${esc(r.productName || r.productModel || '-')}</td>
+                <td class="px-3 py-2 text-xs text-slate-600">${r.finishedQty}</td>
+                <td class="px-3 py-2 text-xs text-slate-600">${Array.isArray(r.items) ? r.items.length : 0}</td>
+                <td class="px-3 py-2 text-xs text-slate-600">${esc(r.warehouse || '-')}</td>
+                <td class="px-3 py-2 text-xs text-slate-600">${esc(r.status || '-')}</td>
+                <td class="px-3 py-2 text-xs text-slate-600">${esc(r.operator || '-')}</td>
+                <td class="px-3 py-2 text-xs text-slate-400">${(r.createdAt || '').slice(0, 16).replace('T', ' ')}</td>
+              </tr>`).join('') || '<tr><td colspan="9" class="px-3 py-8 text-center text-xs text-slate-400">暂无领料单</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
+function showMaterialRequisitionDetail(id) {
+  const rec = (data.materialRequisitions || []).find(r => String(r.id) === String(id));
+  if (!rec) return;
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:120;display:flex;align-items:center;justify-content:center;padding:16px;';
+  const rows = (rec.items || []).map(it => `<tr>
+      <td class="px-3 py-2 text-xs text-slate-800">${esc(it.materialName || '-')}</td>
+      <td class="px-3 py-2 text-xs text-slate-600">${esc(it.materialModel || '-')}</td>
+      <td class="px-3 py-2 text-xs text-slate-600">${Number(it.neededQty) || 0}</td>
+      <td class="px-3 py-2 text-xs text-slate-600">${Number(it.unit) || 1}</td>
+    </tr>`).join('') || '<tr><td colspan="4" class="px-3 py-3 text-center text-xs text-slate-400">无明细</td></tr>';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:12px;max-width:520px;width:100%;padding:20px;box-shadow:0 10px 40px rgba(0,0,0,.2);">
+      <div style="font-size:15px;font-weight:600;margin-bottom:8px;">领料单 ${esc(rec.requisitionNo || '')}</div>
+      <div style="font-size:12px;color:#64748b;margin-bottom:12px;">成品：${esc(rec.productName || rec.productModel || '-')}　完工数量：${rec.finishedQty}　仓库：${esc(rec.warehouse || '-')}</div>
+      <table style="width:100%;border-collapse:collapse;">
+        <thead><tr style="background:#f8fafc;"><th style="text-align:left;padding:8px;font-size:12px;">材料名称</th><th style="text-align:left;padding:8px;font-size:12px;">型号</th><th style="text-align:left;padding:8px;font-size:12px;">领用数量</th><th style="text-align:left;padding:8px;font-size:12px;">单位用量</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+      <div style="display:flex;justify-content:flex-end;margin-top:16px;">
+        <button onclick="this.closest('div[style*=position]').remove()" style="padding:8px 16px;border:1px solid #e2e8f0;border-radius:8px;font-size:13px;background:#fff;color:#475569;cursor:pointer;">关闭</button>
+      </div>
+    </div>`;
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+  document.body.appendChild(overlay);
 }
 
 // ==================== 盘点 ====================
@@ -11333,21 +11526,222 @@ function renderFinanceReceivable() {
         <table class="w-full">
           <thead class="bg-slate-50">
             <tr>
-              <th class="px-3 py-2 text-left text-xs font-medium text-slate-600">单据编号</th>
+              <th class="px-3 py-2 text-left text-xs font-medium text-slate-600">订单编号</th>
               <th class="px-3 py-2 text-left text-xs font-medium text-slate-600">客户名称</th>
-              <th class="px-3 py-2 text-left text-xs font-medium text-slate-600">预收金额</th>
-              <th class="px-3 py-2 text-left text-xs font-medium text-slate-600">已结算金/th>
-              <th class="px-3 py-2 text-left text-xs font-medium text-slate-600">单据日期</th>
-              <th class="px-3 py-2 text-left text-xs font-medium text-slate-600">状态</th>
+              <th class="px-3 py-2 text-left text-xs font-medium text-slate-600">应收金额</th>
+              <th class="px-3 py-2 text-left text-xs font-medium text-slate-600">已收金额</th>
+              <th class="px-3 py-2 text-left text-xs font-medium text-slate-600">未收金额</th>
+              <th class="px-3 py-2 text-left text-xs font-medium text-slate-600">操作</th>
             </tr>
           </thead>
-          <tbody class="divide-y divide-slate-100">
-            <tr><td colspan="6" class="px-3 py-8 text-center text-slate-500">暂无应收款数/td></tr>
+          <tbody id="receivable-order-tbody" class="divide-y divide-slate-100">
+            <tr id="receivable-empty-row"><td colspan="6" class="px-3 py-8 text-center text-slate-500">暂无待收款销售订单</td></tr>
           </tbody>
         </table>
       </div>
     </div>
   `;
+  fillReceivableOrders();
+}
+
+// 按单收款：动态填充应收款管理页中的未结清销售订单
+function fillReceivableOrders() {
+  const tbody = document.getElementById('receivable-order-tbody');
+  const emptyRow = document.getElementById('receivable-empty-row');
+  if (!tbody) return;
+  const orders = (data.salesOrders || []).filter(o => {
+    const total = Number(o.totalAmount ?? o.amount ?? 0);
+    const paid = Number(o.paidAmount) || 0;
+    return total > paid; // 未结清
+  });
+  if (emptyRow) emptyRow.style.display = orders.length ? 'none' : '';
+  tbody.innerHTML = orders.map(o => {
+    const total = Number(o.totalAmount ?? o.amount ?? 0);
+    const paid = Number(o.paidAmount) || 0;
+    const unpaid = Math.max(0, total - paid);
+    const cust = o.customerName || o.customer_name || (o.customer && o.customer.name) || '-';
+    const no = o.orderNo || o.orderNumber || o.order_number || o.id || '-';
+    return `<tr class="hover:bg-slate-50">
+      <td class="px-3 py-2 text-xs text-slate-700">${esc(no)}</td>
+      <td class="px-3 py-2 text-xs text-slate-700">${esc(cust)}</td>
+      <td class="px-3 py-2 text-xs text-slate-700">¥${total.toFixed(2)}</td>
+      <td class="px-3 py-2 text-xs text-emerald-600">¥${paid.toFixed(2)}</td>
+      <td class="px-3 py-2 text-xs text-red-500">¥${unpaid.toFixed(2)}</td>
+      <td class="px-3 py-2 text-xs">
+        <button onclick="openReceivePaymentModal('${esc(String(o.id))}','${esc(no)}','${esc(cust)}',${total},${paid})" class="px-2.5 py-1 bg-indigo-500 text-white rounded text-xs hover:bg-indigo-600">确认收款</button>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+// 打开收款弹窗（自建浮层，不依赖遗留的 showModal）
+function openReceivePaymentModal(orderId, orderNo, cust, total, paid) {
+  const unpaid = Math.max(0, total - paid);
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:120;display:flex;align-items:center;justify-content:center;padding:16px;';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:12px;max-width:420px;width:100%;padding:20px;box-shadow:0 10px 40px rgba(0,0,0,.2);">
+      <div style="font-size:15px;font-weight:600;margin-bottom:12px;">确认收款</div>
+      <div style="font-size:12px;color:#64748b;margin-bottom:2px;">订单：<span style="color:#0f172a">${esc(orderNo)}</span>　客户：<span style="color:#0f172a">${esc(cust)}</span></div>
+      <div style="font-size:12px;color:#64748b;margin-bottom:14px;">应收 <span style="color:#0f172a">¥${Number(total).toFixed(2)}</span> · 已收 <span style="color:#0f172a">¥${Number(paid).toFixed(2)}</span> · 未收 <span style="color:#ef4444">¥${unpaid.toFixed(2)}</span></div>
+      <label style="font-size:12px;color:#475569;">本次收款金额（¥）</label>
+      <input id="rcv-amount" type="number" min="0.01" max="${unpaid.toFixed(2)}" step="0.01" value="${unpaid.toFixed(2)}" style="width:100%;margin:4px 0 10px;padding:8px 10px;border:1px solid #e2e8f0;border-radius:8px;font-size:13px;box-sizing:border-box;">
+      <label style="font-size:12px;color:#475569;">收款方式</label>
+      <select id="rcv-method" style="width:100%;margin:4px 0 10px;padding:8px 10px;border:1px solid #e2e8f0;border-radius:8px;font-size:13px;background:#fff;">
+        <option value="现金">现金</option>
+        <option value="银行转账">银行转账</option>
+        <option value="微信">微信</option>
+        <option value="支付宝">支付宝</option>
+      </select>
+      <label style="font-size:12px;color:#475569;">收款日期</label>
+      <input id="rcv-date" type="date" value="${new Date().toISOString().slice(0,10)}" style="width:100%;margin:4px 0 16px;padding:8px 10px;border:1px solid #e2e8f0;border-radius:8px;font-size:13px;box-sizing:border-box;">
+      <div style="display:flex;gap:10px;justify-content:flex-end;">
+        <button onclick="closeReceivePaymentModal()" style="padding:8px 16px;border:1px solid #e2e8f0;border-radius:8px;font-size:13px;background:#fff;color:#475569;cursor:pointer;">取消</button>
+        <button onclick="submitReceivePayment('${esc(String(orderId))}')" style="padding:8px 16px;border:none;border-radius:8px;font-size:13px;background:#4f46e5;color:#fff;cursor:pointer;">确认收款</button>
+      </div>
+    </div>`;
+  overlay.id = 'receive-payment-modal';
+  overlay.addEventListener('click', e => { if (e.target === overlay) closeReceivePaymentModal(); });
+  document.body.appendChild(overlay);
+}
+
+function closeReceivePaymentModal() {
+  const m = document.getElementById('receive-payment-modal');
+  if (m) m.remove();
+}
+
+async function submitReceivePayment(orderId) {
+  const amount = parseFloat(document.getElementById('rcv-amount').value) || 0;
+  const method = document.getElementById('rcv-method').value;
+  const date = document.getElementById('rcv-date').value;
+  if (!(amount > 0)) { showAlertModal('提示', '请输入有效的收款金额'); return; }
+  try {
+    const r = await fetch(`/api/sales-orders/${orderId}/receive-payment`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ amount, method, date })
+    });
+    const j = await r.json();
+    if (r.ok && j.success) {
+      closeReceivePaymentModal();
+      const target = (data.salesOrders || []).find(o => String(o.id) === String(orderId));
+      if (target) target.paidAmount = j.paidAmount;
+      setTimeout(() => showSuccessModal('收款成功'), 60);
+      setTimeout(() => renderFinanceReceivable(), 150);
+    } else {
+      showAlertModal('提示', j.message || '收款失败，请重试');
+    }
+  } catch (e) {
+    showAlertModal('提示', '收款失败，请检查网络后重试');
+  }
+}
+
+// ==================== 销售退货 ====================
+function renderSalesReturn() {
+  document.getElementById('page-title').textContent = '销售退货';
+  document.getElementById('page-subtitle').textContent = '登记销售退货，回补库存并红冲销售收入';
+
+  const container = document.getElementById('page-content');
+  if (!container) return;
+
+  const productOptions = (data.products || []).map(p =>
+    `<option value="${esc(String(p.id))}" data-name="${esc(p.name || '')}" data-model="${esc(p.model || '')}" data-price="${Number(p.price) || ''}">${esc(p.name || p.model || p.id)}（${esc(p.model || '-')}）</option>`
+  ).join('') || '<option value="">暂无产品</option>';
+
+  container.innerHTML = `
+    <div class="fade-in text-xs">
+      <div class="bg-white border border-slate-200 rounded-lg p-4 mb-4">
+        <div class="grid grid-cols-2 md:grid-cols-3 gap-3 mb-3">
+          <div><label class="block text-xs text-slate-500 mb-1">关联销售订单号（选填）</label><input id="sr_orderNo" type="text" class="w-full px-2 py-1.5 border border-slate-200 rounded text-sm" placeholder="如 SO2024..."></div>
+          <div><label class="block text-xs text-slate-500 mb-1">产品</label><select id="sr_productId" class="w-full px-2 py-1.5 border border-slate-200 rounded text-sm">${productOptions}</select></div>
+          <div><label class="block text-xs text-slate-500 mb-1">退货数量</label><input id="sr_quantity" type="number" min="1" step="1" class="w-full px-2 py-1.5 border border-slate-200 rounded text-sm" placeholder="退货数量"></div>
+          <div><label class="block text-xs text-slate-500 mb-1">单价（预估，默认取产品/订单价）</label><input id="sr_unitPrice" type="number" min="0" step="0.01" class="w-full px-2 py-1.5 border border-slate-200 rounded text-sm" placeholder="留空自动带出"></div>
+          <div><label class="block text-xs text-slate-500 mb-1">退货类型</label><select id="sr_type" class="w-full px-2 py-1.5 border border-slate-200 rounded text-sm"><option value="退货">退货</option><option value="换货">换货</option></select></div>
+          <div><label class="block text-xs text-slate-500 mb-1">退货日期</label><input id="sr_date" type="date" value="${new Date().toISOString().slice(0, 10)}" class="w-full px-2 py-1.5 border border-slate-200 rounded text-sm"></div>
+          <div class="col-span-2"><label class="block text-xs text-slate-500 mb-1">退货原因</label><input id="sr_reason" type="text" class="w-full px-2 py-1.5 border border-slate-200 rounded text-sm" placeholder="选填"></div>
+        </div>
+        <button onclick="submitSalesReturn()" class="px-4 py-2 bg-indigo-500 text-white rounded text-xs hover:bg-indigo-600" data-perm="销售管理-销售退货-退货">确认退货</button>
+      </div>
+      <div class="bg-white border border-slate-200 rounded-lg overflow-hidden">
+        <div class="px-4 py-3 border-b border-slate-200 font-medium text-slate-700">退货记录</div>
+        <table class="w-full">
+          <thead class="bg-slate-50"><tr>
+            <th class="px-3 py-2 text-left text-xs text-slate-600">退货单号</th>
+            <th class="px-3 py-2 text-left text-xs text-slate-600">订单号</th>
+            <th class="px-3 py-2 text-left text-xs text-slate-600">产品</th>
+            <th class="px-3 py-2 text-left text-xs text-slate-600">数量</th>
+            <th class="px-3 py-2 text-left text-xs text-slate-600">金额</th>
+            <th class="px-3 py-2 text-left text-xs text-slate-600">类型</th>
+            <th class="px-3 py-2 text-left text-xs text-slate-600">原因</th>
+            <th class="px-3 py-2 text-left text-xs text-slate-600">操作人</th>
+            <th class="px-3 py-2 text-left text-xs text-slate-600">时间</th>
+          </tr></thead>
+          <tbody class="divide-y divide-slate-100">
+            ${(data.salesReturns || []).slice().reverse().slice(0, 30).map(r => `
+              <tr class="hover:bg-slate-50">
+                <td class="px-3 py-2 text-xs text-slate-600">${esc(r.returnNo || '-')}</td>
+                <td class="px-3 py-2 text-xs text-slate-600">${esc(r.orderNo || '-')}</td>
+                <td class="px-3 py-2 text-xs text-slate-800">${esc(r.productName || '-')}</td>
+                <td class="px-3 py-2 text-xs text-slate-600">${r.quantity}</td>
+                <td class="px-3 py-2 text-xs text-red-500">¥${Number(r.amount || 0).toFixed(2)}</td>
+                <td class="px-3 py-2 text-xs text-slate-600">${esc(r.returnType || '退货')}</td>
+                <td class="px-3 py-2 text-xs text-slate-600">${esc(r.returnReason || '-')}</td>
+                <td class="px-3 py-2 text-xs text-slate-600">${esc(r.operator || '-')}</td>
+                <td class="px-3 py-2 text-xs text-slate-400">${(r.createdAt || '').slice(0, 16).replace('T', ' ')}</td>
+              </tr>`).join('') || '<tr><td colspan="9" class="px-3 py-4 text-center text-xs text-slate-400">暂无退货记录</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+
+  const sel = document.getElementById('sr_productId');
+  if (sel) {
+    sel.addEventListener('change', () => {
+      const opt = sel.selectedOptions[0];
+      const price = opt && opt.getAttribute('data-price');
+      const priceInput = document.getElementById('sr_unitPrice');
+      if (priceInput && opt) priceInput.value = price || '';
+    });
+  }
+}
+
+function submitSalesReturn() {
+  const productId = document.getElementById('sr_productId').value;
+  const quantity = Number(document.getElementById('sr_quantity').value);
+  const unitPrice = Number(document.getElementById('sr_unitPrice').value) || 0;
+  if (!productId) { showAlertModal('提示', '请选择产品'); return; }
+  if (!(quantity > 0)) { showAlertModal('提示', '请输入正确的退货数量'); return; }
+
+  const sel = document.getElementById('sr_productId');
+  const opt = sel && sel.selectedOptions[0];
+  const payload = {
+    productId,
+    productName: opt ? opt.getAttribute('data-name') : '',
+    productModel: opt ? opt.getAttribute('data-model') : '',
+    quantity,
+    unitPrice,
+    returnType: document.getElementById('sr_type').value,
+    date: document.getElementById('sr_date').value,
+    returnReason: document.getElementById('sr_reason').value,
+    orderNo: document.getElementById('sr_orderNo').value
+  };
+
+  fetch('/api/sales-returns', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  }).then(async r => {
+    const j = await r.json();
+    if (r.ok && j.success) {
+      if (!data.salesReturns) data.salesReturns = [];
+      data.salesReturns.unshift(j.record);
+      showSuccessModal('退货成功：已回补库存并红冲销售收入');
+      renderSalesReturn();
+    } else {
+      showAlertModal('提示', j.message || '退货失败，请重试');
+    }
+  }).catch(() => showAlertModal('提示', '退货失败，请检查网络后重试'));
 }
 
 function renderFinancePayable() {
@@ -17108,7 +17502,8 @@ window.showRolePermissions = async function(roleId) {
       children: [
         { name: '销售订单', actions: ['查看', '添加', '修改', '删除', '打印', '导出'] },
         { name: '待审核订单', actions: ['查看', '审核', '修改', '打印', '导出'] },
-        { name: '销售发货', actions: ['发货', '预览', '导出', '打印', '结算'] }
+        { name: '销售发货', actions: ['发货', '预览', '导出', '打印', '结算'] },
+        { name: '销售退货', actions: ['查看', '退货'] }
       ]
     },
     { 
