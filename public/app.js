@@ -8854,9 +8854,14 @@ async function renderBarcodeLabel() {
   if (!container) return;
   container.innerHTML = `
     <div class="fade-in text-xs">
+      <div class="flex items-center justify-between mb-3">
+        <div class="text-xs text-slate-500">勾选产品后点击「批量打印标签」，可一次打印多个产品的库存标签</div>
+        <button onclick="openBarcodeBatchPrint()" class="px-3 py-1.5 bg-purple-500 text-white rounded text-xs hover:bg-purple-600" data-perm="库存管理-条码-打印">批量打印标签</button>
+      </div>
       <div class="bg-white border border-slate-200 rounded-lg overflow-hidden">
         <table class="w-full">
           <thead class="bg-slate-50"><tr>
+            <th class="px-2 py-2 text-left text-xs text-slate-600">选择</th>
             <th class="px-3 py-2 text-left text-xs text-slate-600">产品名称</th>
             <th class="px-3 py-2 text-left text-xs text-slate-600">型号</th>
             <th class="px-3 py-2 text-left text-xs text-slate-600">规格</th>
@@ -8868,6 +8873,9 @@ async function renderBarcodeLabel() {
           <tbody class="divide-y divide-slate-100">
             ${(data.products || []).map(p => `
               <tr class="hover:bg-slate-50">
+                <td class="px-2 py-2 text-center">
+                  <input type="checkbox" class="barcode-print-checkbox" data-id="${esc(String(p.id))}" checked>
+                </td>
                 <td class="px-3 py-2 text-xs text-slate-800">${esc(p.name || p.type || '-')}</td>
                 <td class="px-3 py-2 text-xs text-slate-600">${esc(p.model || p.sku || '-')}</td>
                 <td class="px-3 py-2 text-xs text-slate-600">${esc(p.spec || '-')}</td>
@@ -8878,7 +8886,7 @@ async function renderBarcodeLabel() {
                   <button onclick="generateProductBarcode('${esc(String(p.id))}')" class="px-2 py-1 bg-blue-500 text-white rounded hover:bg-blue-600" data-perm="库存管理-条码-生成">生成条码</button>
                   <button onclick="openBarcodePrint('${esc(String(p.id))}')" class="px-2 py-1 bg-teal-500 text-white rounded hover:bg-teal-600 ml-1" data-perm="库存管理-条码-打印">打印标签</button>
                 </td>
-              </tr>`).join('') || '<tr><td colspan="7" class="px-3 py-4 text-center text-xs text-slate-400">暂无产品</td></tr>'}
+              </tr>`).join('') || '<tr><td colspan="8" class="px-3 py-4 text-center text-xs text-slate-400">暂无产品</td></tr>'}
           </tbody>
         </table>
       </div>
@@ -8942,6 +8950,108 @@ function printBarcodeLabel() {
     '@media print { body * { visibility: hidden; } #label { visibility: visible; } #label { position: absolute; left: 0; top: 0; } }' +
     'body { font-family: Arial, sans-serif; text-align: center; padding: 20px; }</style></head>' +
     '<body><div id="label">' + content + '</div><script>window.onload=function(){setTimeout(function(){window.print();},300);};<\/script></body></html>');
+  w.document.close();
+}
+
+// ==================== 条码标签：批量打印 ====================
+// 打开批量打印选择弹层：按行复选框决定选中的产品，支持每张打印份数
+function openBarcodeBatchPrint() {
+  const products = data.products || [];
+  const mount = document.getElementById('barcode-print-mount');
+  if (!mount) return;
+  mount.innerHTML = `
+    <div id="barcode-batch-modal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+      <div class="bg-white rounded-xl shadow-xl w-full max-w-2xl mx-4 p-6 max-h-[85vh] flex flex-col">
+        <div class="flex items-center justify-between mb-3">
+          <div class="text-sm font-semibold text-slate-800">批量打印库存标签</div>
+          <button onclick="document.getElementById('barcode-batch-modal').remove()" class="text-slate-400 hover:text-slate-600 text-lg leading-none">&times;</button>
+        </div>
+        <div class="mb-3 flex items-center gap-2 text-xs">
+          <button onclick="toggleBatchCheckAll()" class="px-3 py-1.5 border border-slate-300 rounded hover:bg-slate-50">全选 / 取消全选</button>
+          <span class="text-slate-400">默认勾选全部产品，打印份数默认为 1</span>
+        </div>
+        <div class="flex-1 overflow-auto border border-slate-200 rounded-lg mb-3">
+          <table class="w-full">
+            <thead class="bg-slate-50"><tr>
+              <th class="px-2 py-2 text-left text-xs text-slate-600">选择</th>
+              <th class="px-3 py-2 text-left text-xs text-slate-600">产品</th>
+              <th class="px-3 py-2 text-left text-xs text-slate-600">条码</th>
+              <th class="px-3 py-2 text-left text-xs text-slate-600 w-20">打印份数</th>
+            </tr></thead>
+            <tbody class="divide-y divide-slate-100">
+              ${products.map(p => `
+                <tr class="hover:bg-slate-50">
+                  <td class="px-2 py-2 text-center">
+                    <input type="checkbox" class="batch-print-check" value="${esc(String(p.id))}" checked>
+                  </td>
+                  <td class="px-3 py-2 text-xs text-slate-800">${esc(p.name || p.type || '')}
+                    <span class="text-slate-400">（${esc(p.model || '-')} / ${esc(p.warehouse || '-')}）</span>
+                  </td>
+                  <td class="px-3 py-2 text-xs text-slate-600 font-mono">${esc(p.barcode || 'P' + String(p.id))}</td>
+                  <td class="px-3 py-2"><input type="number" min="1" max="99" value="1" class="batch-print-qty w-16 px-2 py-1 border border-slate-200 rounded text-xs"></td>
+                </tr>`).join('') || '<tr><td colspan="4" class="px-3 py-4 text-center text-xs text-slate-400">暂无产品</td></tr>'}
+            </tbody>
+          </table>
+        </div>
+        <div class="flex justify-end gap-3">
+          <button onclick="document.getElementById('barcode-batch-modal').remove()" class="px-4 py-2 border border-slate-300 rounded text-xs hover:bg-slate-50">取消</button>
+          <button onclick="printSelectedBarcodes()" class="px-4 py-2 bg-teal-500 text-white rounded text-xs hover:bg-teal-600">打印选中标签</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function toggleBatchCheckAll() {
+  const boxes = Array.from(document.querySelectorAll('.batch-print-check'));
+  if (!boxes.length) return;
+  const allOn = boxes.every(b => b.checked);
+  boxes.forEach(b => { b.checked = !allOn; });
+}
+
+function printSelectedBarcodes() {
+  const selected = [];
+  document.querySelectorAll('.batch-print-check:checked').forEach(cb => {
+    const id = cb.value;
+    const qtyEl = cb.closest('tr').querySelector('.batch-print-qty');
+    const qty = Math.max(1, parseInt(qtyEl && qtyEl.value, 10) || 1);
+    const p = (data.products || []).find(x => String(x.id) === String(id));
+    if (p) selected.push({ product: p, qty: Math.min(qty, 99) });
+  });
+  if (!selected.length) { showAlertModal('提示', '请至少勾选一个产品'); return; }
+  // 生成标签 HTML：每个选中产品按其份数重复，含占位 svg 交由新窗口 JsBarcode 渲染
+  let labels = '';
+  selected.forEach(({ product: p, qty }) => {
+    const code = p.barcode || 'P' + String(p.id);
+    for (let i = 0; i < qty; i++) {
+      labels += `<div class="batch-label">` +
+        `<div class="text-sm font-semibold text-slate-800">${esc(p.name || p.type || '')}</div>` +
+        `<div class="text-xs text-slate-500 mb-1">型号：${esc(p.model || '-')}　仓库：${esc(p.warehouse || '-')}　单位：${esc(p.unit || '-')}</div>` +
+        `<svg class="batch-svg" data-code="${esc(code)}"></svg>` +
+        `</div>`;
+    }
+  });
+  const w = window.open('', '_blank', 'width=860,height=640');
+  if (!w) { showAlertModal('提示', '浏览器拦截了打印窗口，请允许弹窗后重试'); return; }
+  w.document.write('<html><head><title>产品库存标签（批量）</title>' +
+    '<script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"><\/script>' +
+    '<style>' +
+    'body { font-family: Arial, sans-serif; padding: 10px; }' +
+    '.batch-label { display: inline-block; width: 300px; text-align: center; border: 1px dashed #cbd5e1; margin: 4px; padding: 8px; page-break-inside: avoid; vertical-align: top; }' +
+    '@media print { .batch-label { border: 1px solid #e2e8f0; } }' +
+    '</style></head>' +
+    '<body><div id="batch-labels">' + labels + '</div>' +
+    '<script>' +
+    'window.onload=function(){' +
+    '  var svgs=document.querySelectorAll(".batch-svg");' +
+    '  if (typeof JsBarcode === "undefined") { ' +
+    '    Array.prototype.forEach.call(svgs,function(sv){sv.outerHTML="<div style=\"font-size:12px;color:#94a3b8;margin:6px;font-family:monospace;\">条码库未加载：" + sv.getAttribute("data-code") + "</div>";});' +
+    '    window.print(); return; }' +
+    '  Array.prototype.forEach.call(svgs,function(sv){' +
+    '    try { JsBarcode(sv, sv.getAttribute("data-code"), { format:"CODE128", width:2, height:60, displayValue:true, fontSize:14, margin:4 }); } catch(e){} });' +
+    '  setTimeout(function(){ window.print(); }, 350);' +
+    '};' +
+    '<\/script></body></html>');
   w.document.close();
 }
 
