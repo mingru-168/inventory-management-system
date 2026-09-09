@@ -8988,7 +8988,7 @@ function openBarcodeBatchPrint() {
                     <span class="text-slate-400">（${esc(p.model || '-')} / ${esc(p.warehouse || '-')}）</span>
                   </td>
                   <td class="px-3 py-2 text-xs text-slate-600 font-mono">${esc(p.barcode || 'P' + String(p.id))}</td>
-                  <td class="px-3 py-2"><input type="number" min="1" max="99" value="1" class="batch-print-qty w-16 px-2 py-1 border border-slate-200 rounded text-xs"></td>
+                  <td class="px-3 py-2"><input type="number" min="1" max="10" value="1" class="batch-print-qty w-16 px-2 py-1 border border-slate-200 rounded text-xs"></td>
                 </tr>`).join('') || '<tr><td colspan="4" class="px-3 py-4 text-center text-xs text-slate-400">暂无产品</td></tr>'}
             </tbody>
           </table>
@@ -9016,7 +9016,7 @@ function printSelectedBarcodes() {
     const qtyEl = cb.closest('tr').querySelector('.batch-print-qty');
     const qty = Math.max(1, parseInt(qtyEl && qtyEl.value, 10) || 1);
     const p = (data.products || []).find(x => String(x.id) === String(id));
-    if (p) selected.push({ product: p, qty: Math.min(qty, 99) });
+    if (p) selected.push({ product: p, qty: Math.min(qty, 10) });
   });
   if (!selected.length) { showAlertModal('提示', '请至少勾选一个产品'); return; }
   // 生成标签 HTML：每个选中产品按其份数重复，含占位 svg 交由新窗口 JsBarcode 渲染
