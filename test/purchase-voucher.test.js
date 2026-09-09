@@ -146,3 +146,63 @@ test('采购退货 → 生成红冲凭证（负金额），同科目聚合净额
   const sum = vouchersOf(orderId).filter(x => x.type === 'expense').reduce((s, x) => s + x.amount, 0);
   assert.strictEqual(sum, 0, '创建 1200 与红冲全额抵消，净额 0');
 });
+
+// ==================== 采购付款 ====================
+test('采购付款 → 记录付现金流(负值、type 为空)且不重复计入支出口径，收满更新状态', async () => {
+  const r = await api('POST', '/api/purchase-orders', {
+    supplierName: '供应商E', totalAmount: 600
+  }, adminToken);
+  const orderId = r.json.id;
+  const expenseBefore = vouchersOf(orderId).filter(x => x.type === 'expense').reduce((s, x) => s + x.amount, 0);
+  assert.strictEqual(expenseBefore, 600, '创建时已计采购成本 600');
+
+  // 部分付款 400（现金），检查累计与状态
+  const p1 = await api('POST', `/api/purchase-orders/${orderId}/pay-payment`, { amount: 400, method: '现金' }, adminToken);
+  assert.strictEqual(p1.status, 200, '付款成功');
+  assert.strictEqual(p1.json.paidAmount, 400, '累计已付 400');
+  assert.notStrictEqual(p1.json.order.status, 'paid', '未付清不标记 paid');
+
+  // 超额付款 → 400
+  const over = await api('POST', `/api/purchase-orders/${orderId}/pay-payment`, { amount: 300, method: '现金' }, adminToken);
+  assert.strictEqual(over.status, 400, '超额付款被拦截');
+
+  // 付清尾款 200（银行），应标记 paid
+  const p2 = await api('POST', `/api/purchase-orders/${orderId}/pay-payment`, { amount: 200, method: '银行转账' }, adminToken);
+  assert.strictEqual(p2.status, 200);
+  assert.strictEqual(p2.json.paidAmount, 600);
+  assert.strictEqual(p2.json.order.status, 'paid', '付清后标记 paid');
+
+  const paidVouchers = vouchersOf(orderId).filter(v => v.eventType === 'purchase_paid');
+  assert.strictEqual(paidVouchers.length, 2, '生成两条付现凭证');
+  assert.strictEqual(paidVouchers[0].category, '采购付现');
+  assert.strictEqual(paidVouchers[0].amount, -400, '付现金额为负值（资金流出）');
+  assert.strictEqual(paidVouchers[0].accountCode, '1001 现金');
+  assert.strictEqual(paidVouchers[1].accountCode, '1002 银行存款');
+  assert.strictEqual(paidVouchers[0].type, '', '付现凭证 type 为空，不重复计入支出口径');
+  // expense 口径不变（仍为采购成本 600）
+  const expenseAfter = vouchersOf(orderId).filter(x => x.type === 'expense').reduce((s, x) => s + x.amount, 0);
+  assert.strictEqual(expenseAfter, 600, '支出口径未被付款重复计数');
+});
+
+test('采购付款：无该权限角色 → 403', async () => {
+  const d = getData();
+  // 仅授「创建采购单」、无「付款」的受限角色
+  d.roles.push({ id: 'rpv', name: '采购受限', permissions: ['采购管理-采购订单-创建采购单'] });
+  d.users.push({ id: 'upv', username: 'pvlimited', name: '采购受限用户', role: '采购受限', password: 'pvlimited', status: '启用' });
+  const login = await api('POST', '/api/login', { username: 'pvlimited', password: 'pvlimited' });
+  assert.ok(login.json.token, '受限用户登录成功');
+
+  const r = await api('POST', '/api/purchase-orders', { supplierName: '供应商F', totalAmount: 300 }, adminToken);
+  const orderId = r.json.id;
+  const resp = await api('POST', `/api/purchase-orders/${orderId}/pay-payment`, { amount: 300 }, login.json.token);
+  assert.strictEqual(resp.status, 403, '无付款权限被拦截');
+});
+
+test('采购付款：非法金额 → 400', async () => {
+  const r = await api('POST', '/api/purchase-orders', { supplierName: '供应商G', totalAmount: 300 }, adminToken);
+  const orderId = r.json.id;
+  const bad = await api('POST', `/api/purchase-orders/${orderId}/pay-payment`, { amount: 0 }, adminToken);
+  assert.strictEqual(bad.status, 400, '金额 0 被拦截');
+  const nonexist = await api('POST', `/api/purchase-orders/nope/pay-payment`, { amount: 100 }, adminToken);
+  assert.strictEqual(nonexist.status, 404, '订单不存在返回 404');
+});

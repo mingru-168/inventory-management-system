@@ -1745,6 +1745,42 @@ app.post('/api/purchase-orders/:id/receive', requirePerm('采购管理', '采购
   res.json({ success: true, order });
 });
 
+// 采购付款：记录向供应商的实付现金流（付现），冲销应付但不重复计入采购成本
+app.post('/api/purchase-orders/:id/pay-payment', requirePerm('采购管理', '采购订单', '付款'), (req, res) => {
+  const order = data.purchaseOrders.find(o => String(o.id) === String(req.params.id));
+  if (!order) return res.status(404).json({ success: false, message: '采购订单不存在' });
+  const amt = Number(req.body.amount);
+  if (!(amt > 0)) return res.status(400).json({ success: false, message: '请输入有效的付款金额' });
+  const total = Number(order.totalAmount ?? order.total_amount ?? 0);
+  const paid = Number(order.paidAmount) || 0;
+  if (total > 0 && paid + amt > total + 0.001) {
+    return res.status(400).json({ success: false, message: '付款金额超出采购单未付金额' });
+  }
+  order.paidAmount = paid + amt;
+  if (total > 0 && order.paidAmount >= total - 0.001) order.status = 'paid';
+
+  const method = String(req.body.method || req.body.payType || '现金');
+  const accountCode = /银行|转账/.test(method) ? '1002 银行存款' : '1001 现金';
+  data.financeRecords.push(createFinanceVoucher({
+    type: '',            // 付现不改变支出口径，避免与采购成本(expense)重复计数
+    category: '采购付现',
+    amount: -amt,        // 资金流出，记为负值方向明确
+    date: String(req.body.date || new Date().toISOString().slice(0, 10)),
+    description: `采购单 ${order.orderNo || ''} 付款 ${amt} 元`,
+    relatedOrderId: order.id,
+    eventType: 'purchase_paid',
+    direction: '付现',
+    accountCode,
+    status: 'paid',
+    operator: req.user?.name || ''
+  }));
+
+  order.updatedAt = new Date().toISOString();
+  saveData();
+  logAudit('采购付款', `采购单 ${order.orderNo || ''} 付款 ${amt} 元（方式：${method}）`, req.user?.name);
+  res.json({ success: true, order, paidAmount: order.paidAmount });
+});
+
 // 采购退货：红冲库存与采购支出财务记录
 app.post('/api/purchase-returns', requirePerm('采购管理', '采购退货', '退货'), (req, res) => {
   const productId = String(req.body.productId || req.body.product_id || '');
