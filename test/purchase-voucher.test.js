@@ -206,3 +206,24 @@ test('采购付款：非法金额 → 400', async () => {
   const nonexist = await api('POST', `/api/purchase-orders/nope/pay-payment`, { amount: 100 }, adminToken);
   assert.strictEqual(nonexist.status, 404, '订单不存在返回 404');
 });
+
+// ==================== 采购订单金额变更同步凭证 ====================
+test('采购订单修改 totalAmount → 关联 purchase_order 凭证金额同步更新', async () => {
+  const r = await api('POST', '/api/purchase-orders', { supplierName: '供应商Z', totalAmount: 500 }, adminToken);
+  const orderId = r.json.id;
+  let v = vouchersOf(orderId).find(x => x.eventType === 'purchase_order');
+  assert.ok(v && v.amount === 500, '初始凭证金额 500');
+
+  const upd = await api('PUT', `/api/purchase-orders/${orderId}`, { totalAmount: 700 }, adminToken);
+  assert.strictEqual(upd.status, 200);
+
+  v = vouchersOf(orderId).find(x => x.eventType === 'purchase_order');
+  assert.ok(v && v.amount === 700, '凭证金额已同步为 700');
+  assert.ok(v.updatedAt, '凭证更新时间已写入');
+
+  // 未变更时再次 PUT：不触发更新（幂等）
+  const upd2 = await api('PUT', `/api/purchase-orders/${orderId}`, { remark: '仅改备注' }, adminToken);
+  assert.strictEqual(upd2.status, 200);
+  const vAfterNote = (getData().financeRecords).find(x => x.relatedOrderId === orderId && x.eventType === 'purchase_order');
+  assert.strictEqual(vAfterNote.amount, 700, '仅改备注不影响凭证金额');
+});

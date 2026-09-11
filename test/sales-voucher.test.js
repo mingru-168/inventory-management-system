@@ -177,3 +177,61 @@ test('聚合口径：income 仅含创建订单收入，不含收款与发货重�
   const prodCost = recs.filter(r => r.type === 'expense' && r.eventType === 'production_complete').reduce((s, r) => s + r.amount, 0);
   assert.strictEqual(prodCost, 100, '生产成本 100 已计入 expense');
 });
+
+// ==================== 销售订单金额变更同步凭证 ====================
+test('销售订单修改 totalAmount → 关联 sales_order 凭证金额同步更新', async () => {
+  const so = await api('POST', '/api/sales-orders', {
+    customerName: '凭证客户', totalAmount: 3000,
+    items: [{ productId: 'p9', quantity: 15, price: 200 }]
+  }, adminToken);
+  const orderId = so.json.id;
+  let v = vouchers(orderId).find(x => x.eventType === 'sales_order');
+  assert.ok(v && v.amount === 3000, '初始凭证金额 3000');
+
+  // 修改 totalAmount 为 4500
+  const upd = await api('PUT', `/api/sales-orders/${orderId}`, { totalAmount: 4500 }, adminToken);
+  assert.strictEqual(upd.status, 200);
+
+  v = vouchers(orderId).find(x => x.eventType === 'sales_order');
+  assert.ok(v && v.amount === 4500, '凭证金额已同步为 4500');
+  assert.ok(v.updatedAt, '凭证更新时间已写入');
+
+  // 改回去，金额无变动时不应产生额外修改（幂等安全）
+  const upd2 = await api('PUT', `/api/sales-orders/${orderId}`, { totalAmount: 4500 }, adminToken);
+  assert.strictEqual(upd2.status, 200);
+  assert.strictEqual(v.updatedAt, (getData().financeRecords.find(x => x.relatedOrderId === orderId && x.eventType === 'sales_order')).updatedAt, '无变动时凭证未再次更新');
+});
+
+// ==================== 调换货完成：库存 + 补差价/退差款凭证 ====================
+test('调换货 PUT → done：回补客户退回货品库存、生成补差价/退差款凭证', async () => {
+  const d = getData();
+  const invBefore = (d.inventory.find(i => String(i.productId) === 'p9') || {}).quantity || 0;
+
+  // 换货 + 补差价
+  const ex = await api('POST', '/api/exchange-orders', {
+    orderNo: 'SO-EX-TEST', productId: 'p9', productName: '凭证销售产品',
+    quantity: 2, type: '换货', extraAmount: 80, refundAmount: 30
+  }, adminToken);
+  assert.strictEqual(ex.status, 200);
+  const exId = ex.json.record.id;
+
+  // 审批 → 完成
+  await api('PUT', `/api/exchange-orders/${exId}`, { status: 'approved' }, adminToken);
+  const dn = await api('PUT', `/api/exchange-orders/${exId}`, { status: 'done' }, adminToken);
+  assert.strictEqual(dn.status, 200, 'done 成功');
+
+  // 库存相对回补（跨测试共享数据，只做增量断言）
+  const invAfter = (d.inventory.find(i => String(i.productId) === 'p9') || {}).quantity || 0;
+  assert.strictEqual(invAfter, invBefore + 2, `库存相对回补 2 件（${invBefore} → ${invAfter}）`);
+
+  // 凭证：补差价收入 + 退差款红冲
+  const extraV = d.financeRecords.find(v => v.eventType === 'exchange_extra' && v.relatedOrderId === 'SO-EX-TEST');
+  const refundV = d.financeRecords.find(v => v.eventType === 'exchange_refund' && v.relatedOrderId === 'SO-EX-TEST');
+  assert.ok(extraV && extraV.amount === 80 && extraV.type === 'income', '补差价凭证生成（income 80）');
+  assert.ok(refundV && refundV.amount === -30 && refundV.type === 'income', '退差款红冲凭证生成（income -30）');
+
+  // 幂等：再执行一次 done 不重复生成
+  const beforeCount = d.financeRecords.length;
+  await api('PUT', `/api/exchange-orders/${exId}`, { status: 'done' }, adminToken);
+  assert.strictEqual(d.financeRecords.length, beforeCount, 'done 再次执行不重复生成凭证');
+});

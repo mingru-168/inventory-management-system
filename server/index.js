@@ -863,13 +863,18 @@ app.post('/api/exchange-orders', requirePerm('生产管理', '调换货', '调�
     id: generateId(),
     exchangeNo: String(req.body.exchangeNo || ('EX' + Date.now())),
     orderNo: String(req.body.orderNo || ''),
+    productId: String(req.body.productId || req.body.product_id || ''),
     productName: String(req.body.productName || ''),
     productModel: String(req.body.productModel || ''),
     color: String(req.body.color || ''),
     spec: String(req.body.spec || ''),
+    warehouse: String(req.body.warehouse || '主仓库'),
     quantity: qty,
     reason: String(req.body.reason || ''),
     type: String(req.body.type || '换货'),
+    // 差价/退款金额（可选）：客户付补差价为收入正，退回差款为红冲负
+    extraAmount: Number(req.body.extraAmount) || 0,
+    refundAmount: Number(req.body.refundAmount) || 0,
     status: 'pending',
     remark: String(req.body.remark || ''),
     operator: req.user ? (req.user.username || '') : '',
@@ -921,6 +926,52 @@ app.put('/api/exchange-orders/:id', requirePerm('生产管理', '调换货', '�
     } else if (next === 'done') {
       rec.completedAt = new Date().toISOString();
       rec.completedBy = req.user ? (req.user.username || req.user.name || '') : '';
+
+      // 调换货完成 → 回补客户退回货品库存 + 补差价/退款凭证（幂等：已执行过跳过）
+      if (!rec.inventoryRestored) {
+        const qty = Number(rec.quantity) || 0;
+        if (qty > 0) {
+          let inv = (data.inventory || []).find(i => String(i.productId) === String(rec.productId));
+          if (!inv && rec.productId) {
+            inv = { id: generateId(), productId: rec.productId, productName: rec.productName, productModel: rec.productModel, quantity: 0, minStock: 0, warehouse: rec.warehouse || '主仓库' };
+            data.inventory.push(inv);
+          }
+          if (inv) {
+            inv.quantity = (Number(inv.quantity) || 0) + qty;
+            inv.updatedAt = new Date().toISOString();
+          }
+          const prod = (data.products || []).find(p => String(p.id) === String(rec.productId));
+          if (prod) prod.stock = (Number(prod.stock) || 0) + qty;
+        }
+        rec.inventoryRestored = true;
+
+        // 补差价（客户付正）/ 退差款（红冲负）→ 只在金额非零时生成凭证
+        const extra = Number(rec.extraAmount) || 0;
+        const refund = Number(rec.refundAmount) || 0;
+        if (extra > 0) {
+          data.financeRecords.push(createFinanceVoucher({
+            type: 'income', category: '调换货补差价',
+            amount: extra, date: new Date().toISOString().slice(0, 10),
+            description: `调换货补差价 ${rec.exchangeNo || ''}`,
+            relatedOrderId: rec.orderNo || '', eventType: 'exchange_extra',
+            direction: '补收', accountCode: '1122 应收账款',
+            status: 'completed', operator: rec.completedBy
+          }));
+        }
+        if (refund > 0) {
+          data.financeRecords.push(createFinanceVoucher({
+            type: 'income', category: '调换货退差款(红冲)',
+            amount: -refund, date: new Date().toISOString().slice(0, 10),
+            description: `调换货退差款 ${rec.exchangeNo || ''}`,
+            relatedOrderId: rec.orderNo || '', eventType: 'exchange_refund',
+            direction: '红冲', accountCode: '1122 应收账款',
+            status: 'returned', operator: rec.completedBy
+          }));
+        }
+
+        // 写审计（done 完成凭证化）
+        logAudit('调换货完成', `单号 ${rec.exchangeNo}，${rec.type} ${rec.productName || ''} ${qty} 件，补差价 ${extra} 元/退差款 ${refund} 元`, rec.completedBy);
+      }
     }
   }
 
@@ -1090,6 +1141,7 @@ app.post('/api/sales-orders', requirePerm('销售管理', '销售订单', '添�
 app.put('/api/sales-orders/:id', requirePerm('销售管理', '销售订单', '修改'), (req, res) => {
   const order = data.salesOrders.find(o => o.id === req.params.id);
   if (order) {
+    const oldTotal = Number(order.totalAmount ?? order.amount ?? order.total_amount ?? 0);
     Object.assign(order, pick(req.body, {
       orderNo: 'string', customerId: true, customer_id: true, customerName: 'string', customer_name: 'string',
       customer: 'string', company: 'string', contactName: 'string', contact_name: 'string', contactPhone: 'string', contact_phone: 'string',
@@ -1103,6 +1155,17 @@ app.put('/api/sales-orders/:id', requirePerm('销售管理', '销售订单', '�
       packaging: 'string', woodworking: 'string', warehousing: 'string', followMethod: 'string', follow_method: 'string',
       items: true, status: 'string'
     }));
+
+    // 销售订单金额变更 → 同步已生成的销售凭证金额，保持财务一致（幂等：无 sale_order 凭证时跳过）
+    const newTotal = Number(order.totalAmount ?? order.amount ?? order.total_amount ?? 0);
+    if (!(Math.abs(newTotal - oldTotal) < 0.001)) {
+      const voucher = (data.financeRecords || []).find(v => v.relatedOrderId === order.id && v.eventType === 'sales_order');
+      if (voucher) {
+        voucher.amount = newTotal;
+        voucher.updatedAt = new Date().toISOString();
+      }
+    }
+
     saveData();
     res.json(order);
   } else {
@@ -1630,6 +1693,7 @@ app.post('/api/purchase-orders', requirePerm('采购管理', '采购订单', '�
 app.put('/api/purchase-orders/:id', requirePerm('采购管理', '采购订单', '修改'), (req, res) => {
   const order = data.purchaseOrders.find(o => o.id === req.params.id);
   if (order) {
+    const oldTotal = Number(order.totalAmount ?? order.total_amount ?? 0);
     Object.assign(order, pick(req.body, { supplierId: 'string', supplier_id: 'string', supplierName: 'string', supplier_name: 'string', supplier: 'string', contact: 'string', phone: 'string', address: 'string', items: true, orderDate: 'string', order_date: 'string', totalAmount: true, total_amount: true, remark: 'string', note: 'string', warehouse: 'string', expectedDate: 'string', status: 'string', productName: 'string', product_id: true, productId: true, quantity: true, unit: 'string', unitPrice: true, price: true, color: 'string', spec: 'string' }));
     
     // 状态推进到 completed 时回补库存（仅在未入库过时执行一次，避免与收货重复入库）
@@ -1665,7 +1729,17 @@ app.put('/api/purchase-orders/:id', requirePerm('采购管理', '采购订单', 
       });
       order.stocked = true;
     }
-    
+
+    // 采购订单金额变更 → 同步已生成的 purchase_order 凭证金额，保持财务一致
+    const newTotal = Number(order.totalAmount ?? order.total_amount ?? 0);
+    if (!(Math.abs(newTotal - oldTotal) < 0.001)) {
+      const voucher = (data.financeRecords || []).find(v => v.relatedOrderId === order.id && v.eventType === 'purchase_order');
+      if (voucher) {
+        voucher.amount = newTotal;
+        voucher.updatedAt = new Date().toISOString();
+      }
+    }
+
     saveData();
     res.json(order);
   } else {
