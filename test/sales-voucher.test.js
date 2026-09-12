@@ -235,3 +235,27 @@ test('调换货 PUT → done：回补客户退回货品库存、生成补差价/
   await api('PUT', `/api/exchange-orders/${exId}`, { status: 'done' }, adminToken);
   assert.strictEqual(d.financeRecords.length, beforeCount, 'done 再次执行不重复生成凭证');
 });
+
+// ==================== 审核自动配货（全库存充足）→ 销售凭证状态同步为 allocated ====================
+test('销售审核(全部配货) → 凭证 status 同步为 allocated', async () => {
+  const so = await api('POST', '/api/sales-orders', {
+    customerName: '审核凭证客户', totalAmount: 1500,
+    items: [{ productId: 'p9', quantity: 5, price: 300 }]
+  }, adminToken);
+  assert.strictEqual(so.status, 200);
+  const orderId = so.json.id;
+
+  // 初始凭证状态应为 created（创建订单时写入）
+  const before = vouchers(orderId).find(v => v.eventType === 'sales_order');
+  assert.ok(before && before.status !== 'allocated', '审核前凭证不为 allocated');
+
+  // 审核自动配货（p9 库存充足）
+  const appr = await api('POST', `/api/sales-orders/${orderId}/approve`, {}, adminToken);
+  assert.strictEqual(appr.status, 200);
+  assert.strictEqual(appr.json.success, true, '全部配货成功');
+  assert.strictEqual(appr.json.order.status, 'allocated', '订单状态为 allocated');
+
+  const after = vouchers(orderId).find(v => v.eventType === 'sales_order');
+  assert.ok(after && after.status === 'allocated', '审核后凭证状态同步为 allocated');
+  assert.ok(after.allocatedAt, '审核配货时间已写入');
+});

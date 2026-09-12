@@ -1328,6 +1328,15 @@ app.post('/api/sales-orders/:id/approve', requirePerm('销售管理', '待审核
     // 全部配货成功
     order.status = 'allocated';
     order.allocatedAt = new Date().toISOString();
+
+    // 凭证化：审核自动配货成功时同步更新销售凭证状态为 allocated（与 allocate-order 端点一致）
+    const saleVoucher = (data.financeRecords || []).find(r => r.relatedOrderId === order.id && r.eventType === 'sales_order');
+    if (saleVoucher) {
+      saleVoucher.status = 'allocated';
+      saleVoucher.allocatedAt = order.allocatedAt;
+      saleVoucher.description = `${saleVoucher.description || '销售'} 已发货(审核配货)`;
+    }
+
     saveData();
     logAudit('审核订单(自动配货)', `订单 ${order.orderNo} 全部配货成功，共 ${allocatedItems.length} 项`, req.user?.name);
     return res.json({
@@ -3322,6 +3331,14 @@ app.put('/api/processes/:id/complete', requirePerm('生产管理', '完工确认
       
       order.status = 'allocated';
       order.allocatedAt = new Date().toISOString();
+
+      // 凭证化：生产完工自动配货时同步销售凭证状态为 allocated
+      const saleVoucher = (data.financeRecords || []).find(r => r.relatedOrderId === order.id && r.eventType === 'sales_order');
+      if (saleVoucher) {
+        saleVoucher.status = 'allocated';
+        saleVoucher.allocatedAt = order.allocatedAt;
+        saleVoucher.description = `${saleVoucher.description || '销售'} 已发货(生产完工配货)`;
+      }
     }
     
     // 更新计划订单状态
