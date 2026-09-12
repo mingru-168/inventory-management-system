@@ -68,6 +68,13 @@ before(async () => {
       { name: '桌腿', model: 'FT', quantity: 4, unit: '根' }
     ]
   });
+  // 销售退货测试夹具：一张已审核配货的销售订单，包含退货产品 pSR 10 件
+  d.salesOrders.push({
+    id: 'soSR', orderNo: 'SRSO001', customerId: 'c1',
+    status: 'allocated',
+    items: [{ productId: 'pSR', productName: '退货产品', quantity: 10, unitPrice: 300 }],
+    totalAmount: 3000
+  });
   // 受限角色：仅有销售退货查看权限（无「退货」动作）→ 用于 403 校验
   d.roles.push({ id: 'rSR', name: '退货只读', permissions: ['销售管理-销售退货-查看'] });
   d.users.push({ id: 'uSR', username: 'srlimited', name: '退货只读用户', role: '退货只读', password: 'srlimited', status: '启用' });
@@ -85,7 +92,7 @@ after(async () => {
 // ==================== 销售退货 ====================
 test('销售退货：回补库存 + 红冲收入凭证 + 退货记录', async () => {
   const beforeInv = (getData().inventory.find(i => String(i.productId) === 'pSR') || {}).quantity;
-  const r = await api('POST', '/api/sales-returns', { productId: 'pSR', quantity: 5, unitPrice: 300 }, adminToken);
+  const r = await api('POST', '/api/sales-returns', { productId: 'pSR', quantity: 5, unitPrice: 300, salesOrderId: 'soSR' }, adminToken);
   assert.strictEqual(r.status, 200, '销售退货成功');
   assert.strictEqual(r.json.success, true);
   assert.strictEqual(r.json.record.quantity, 5);
@@ -105,15 +112,36 @@ test('销售退货：回补库存 + 红冲收入凭证 + 退货记录', async ()
 });
 
 test('销售退货：无退货权限 → 403', async () => {
-  const r = await api('POST', '/api/sales-returns', { productId: 'pSR', quantity: 1 }, limitedToken);
+  const r = await api('POST', '/api/sales-returns', { productId: 'pSR', quantity: 1, salesOrderId: 'soSR' }, limitedToken);
   assert.strictEqual(r.status, 403, '受限用户无退货权限被拦截');
 });
 
-test('销售退货：缺产品或数量非法 → 400', async () => {
-  const r1 = await api('POST', '/api/sales-returns', { quantity: 2 }, adminToken);
-  assert.strictEqual(r1.status, 400);
-  const r2 = await api('POST', '/api/sales-returns', { productId: 'pSR', quantity: 0 }, adminToken);
-  assert.strictEqual(r2.status, 400);
+test('销售退货：缺关联订单 / 缺产品 / 数量非法 → 400', async () => {
+  const r0 = await api('POST', '/api/sales-returns', { productId: 'pSR', quantity: 1 }, adminToken);
+  assert.strictEqual(r0.status, 400, '缺 salesOrderId → 400');
+  const r1 = await api('POST', '/api/sales-returns', { quantity: 2, salesOrderId: 'soSR' }, adminToken);
+  assert.strictEqual(r1.status, 400, '缺 productId → 400');
+  const r2 = await api('POST', '/api/sales-returns', { productId: 'pSR', quantity: 0, salesOrderId: 'soSR' }, adminToken);
+  assert.strictEqual(r2.status, 400, 'quantity=0 → 400');
+});
+
+test('销售退货：订单状态不允许（pending）→ 400', async () => {
+  const d = getData();
+  d.salesOrders.push({
+    id: 'soPending', orderNo: 'SRSO-P01', customerId: 'c1',
+    status: 'pending',
+    items: [{ productId: 'pSR', productName: '退货产品', quantity: 10, unitPrice: 300 }],
+    totalAmount: 3000
+  });
+  const r = await api('POST', '/api/sales-returns', { productId: 'pSR', quantity: 1, salesOrderId: 'soPending' }, adminToken);
+  assert.strictEqual(r.status, 400);
+  assert.match(r.json.message, /不允许退货|待审核|待处理/);
+});
+
+test('销售退货：超退（已发 10，退 11）→ 400', async () => {
+  const r = await api('POST', '/api/sales-returns', { productId: 'pSR', quantity: 11, salesOrderId: 'soSR' }, adminToken);
+  assert.strictEqual(r.status, 400);
+  assert.match(r.json.message, /超出可退数量/);
 });
 
 test('销售退货：GET 列表返回数组', async () => {

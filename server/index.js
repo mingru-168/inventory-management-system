@@ -160,7 +160,11 @@ const initialData = {
   stockOutRecords: [],
   warehouseTransfers: [],
   stocktakes: [],
-  bomConfigs: []
+  bomConfigs: [],
+  advanceReceipts: [],
+  expenseForms: [],
+  otherIncomes: [],
+  internalTransfers: []
 };
 
 // ===== 数据完整性检查：确保所有核心集合存在，防止旧数据缺字段导致崩溃 =====
@@ -171,7 +175,8 @@ function ensureDataIntegrity(obj) {
     'stockInRecords', 'productSpecPrices', 'users', 'roles', 'allocationRecords',
     'orderTrackingRecords', 'inventoryLocks', 'auditLogs', 'exchangeRecords', 'purchaseReturns',
     'notifications', 'warehouseLocations', 'stockOutRecords', 'warehouseTransfers', 'stocktakes',
-    'bomConfigs', 'salesReturns', 'materialRequisitions'
+    'bomConfigs', 'salesReturns', 'materialRequisitions',
+    'advanceReceipts', 'expenseForms', 'otherIncomes', 'internalTransfers'
   ];
   collections.forEach(k => {
     if (!Array.isArray(obj[k])) obj[k] = [];
@@ -994,6 +999,86 @@ app.get('/api/finance-records', (req, res) => {
   res.json(data.financeRecords);
 });
 
+// ===== 通用财务流水查询：支持 eventType / 日期范围 / relatedOrderId / type / direction 过滤 =====
+app.get('/api/finance/query', (req, res) => {
+  let list = data.financeRecords || [];
+  if (req.query.eventType) list = list.filter(r => r.eventType === String(req.query.eventType));
+  if (req.query.type) list = list.filter(r => (r.type || '') === String(req.query.type));
+  if (req.query.direction) list = list.filter(r => r.direction === String(req.query.direction));
+  if (req.query.relatedOrderId) list = list.filter(r => String(r.relatedOrderId) === String(req.query.relatedOrderId));
+  if (req.query.accountCode) list = list.filter(r => r.accountCode === String(req.query.accountCode));
+  if (req.query.dateFrom) {
+    const df = String(req.query.dateFrom);
+    list = list.filter(r => String(r.date || '').slice(0, 10) >= df);
+  }
+  if (req.query.dateTo) {
+    const dt = String(req.query.dateTo);
+    list = list.filter(r => String(r.date || '').slice(0, 10) <= dt);
+  }
+  // sort: 按日期倒序，最新在前
+  list = [...list].sort((a, b) => String(b.createdAt || b.date || '').localeCompare(String(a.createdAt || a.date || '')));
+  res.json(list);
+});
+
+// ===== 客户/供应商资金余额聚合：销售侧（应收/已收/预收余额）+ 采购侧（应付/已付） =====
+app.get('/api/finance/balances', (req, res) => {
+  const result = {
+    customers: [],
+    suppliers: [],
+    summary: { totalReceivable: 0, totalReceived: 0, totalAdvanceBalance: 0, totalPayable: 0, totalPaid: 0 }
+  };
+
+  // ---- 客户维度 ----
+  for (const cust of (data.customers || [])) {
+    const custId = String(cust.id);
+    // 该客户所有销售订单的应收总额（totalAmount 之和）
+    const sales = (data.salesOrders || []).filter(o => String(o.customerId) === custId);
+    const totalReceivable = sales.reduce((s, o) => s + (Number(o.totalAmount ?? o.amount) || 0), 0);
+    // 该客户所有销售订单的已收总额（paidAmount 之和）
+    const totalReceived = sales.reduce((s, o) => s + (Number(o.paidAmount) || 0), 0);
+    // 预收款余额：累计预收 - 累计预收退款
+    const receipts = (data.advanceReceipts || []).filter(r => String(r.customerId) === custId);
+    const advPaid = receipts.filter(r => !r.refundNo).reduce((s, r) => s + (Number(r.amount) || 0), 0);
+    const advRefunded = (data.financeRecords || [])
+      .filter(r => r.eventType === 'advance_refund' && String(r.relatedOrderId) === custId)
+      .reduce((s, r) => s + Math.abs(Number(r.amount) || 0), 0);
+    const advanceBalance = advPaid - advRefunded;
+
+    result.customers.push({
+      id: custId,
+      name: cust.name,
+      totalReceivable,       // 销售应收总额
+      totalReceived,         // 销售已收
+      outstanding: Math.max(0, totalReceivable - totalReceived),  // 未收余额
+      advancePaid: advPaid,  // 累计预收
+      advanceRefunded: advRefunded,  // 累计预收退款
+      advanceBalance         // 预收净余额（可用于后续发货核销）
+    });
+    result.summary.totalReceivable += totalReceivable;
+    result.summary.totalReceived += totalReceived;
+    result.summary.totalAdvanceBalance += advanceBalance;
+  }
+
+  // ---- 供应商维度 ----
+  for (const sup of (data.suppliers || [])) {
+    const supId = String(sup.id);
+    const purchases = (data.purchaseOrders || []).filter(o => String(o.supplierId) === supId || String(o.vendorId) === supId);
+    const totalPayable = purchases.reduce((s, o) => s + (Number(o.totalAmount ?? o.total_amount ?? 0) || 0), 0);
+    const totalPaid = purchases.reduce((s, o) => s + (Number(o.paidAmount) || 0), 0);
+    result.suppliers.push({
+      id: supId,
+      name: sup.name,
+      totalPayable,          // 采购应付总额
+      totalPaid,             // 采购已付
+      outstanding: Math.max(0, totalPayable - totalPaid)  // 未付余额
+    });
+    result.summary.totalPayable += totalPayable;
+    result.summary.totalPaid += totalPaid;
+  }
+
+  res.json(result);
+});
+
 app.get('/api/dashboard', (req, res) => {
   const totalIncome = data.financeRecords.filter(r => r.type === 'income').reduce((s, r) => s + r.amount, 0);
   const totalExpense = data.financeRecords.filter(r => r.type === 'expense').reduce((s, r) => s + r.amount, 0);
@@ -1061,7 +1146,7 @@ app.get('/api/dashboard', (req, res) => {
 
 // ===== 数据导出（CSV，带 UTF-8 BOM 兼容 Excel） =====
 // 仅允许导出白名单集合，防止路径/任意键遍历；对 users 做脱敏（去除 password）
-const EXPORTABLE_COLLECTIONS = ['products', 'inventory', 'warehouses', 'customers', 'suppliers', 'salesOrders', 'purchaseOrders', 'planOrders', 'financeRecords', 'stockInRecords', 'productSpecPrices', 'productionOrders', 'allocationRecords', 'orderTrackingRecords', 'salesReturns', 'materialRequisitions', 'users', 'roles'];
+const EXPORTABLE_COLLECTIONS = ['products', 'inventory', 'warehouses', 'customers', 'suppliers', 'salesOrders', 'purchaseOrders', 'planOrders', 'financeRecords', 'stockInRecords', 'productSpecPrices', 'productionOrders', 'allocationRecords', 'orderTrackingRecords', 'salesReturns', 'materialRequisitions', 'advanceReceipts', 'expenseForms', 'otherIncomes', 'internalTransfers', 'users', 'roles'];
 function toCsvCell(val) {
   if (val === null || val === undefined) return '';
   if (typeof val === 'object') {
@@ -1510,6 +1595,57 @@ app.post('/api/sales-orders/:id/receive-payment', requirePerm('销售管理', '�
   res.json({ success: true, order, paidAmount: order.paidAmount });
 });
 
+// 作废销售订单：仅 pending 状态可作废，已收货/已配货/已收款禁止，同时清理所有关联记录
+app.delete('/api/sales-orders/:id', requirePerm('销售管理', '销售订单', '删除'), (req, res) => {
+  const order = data.salesOrders.find(o => String(o.id) === String(req.params.id));
+  if (!order) return res.status(404).json({ success: false, message: '销售订单不存在' });
+
+  // 仅 pending 可作废——已审核/配货/发货/完成的订单走状态机回退，不允许硬删除
+  if (order.status !== 'pending') {
+    return res.status(400).json({ success: false, message: `当前订单状态「${order.status || '未知'}」不允许作废（仅待处理订单可作废）` });
+  }
+
+  // 已收款禁止作废——需先处理退款
+  const paidAmount = Number(order.paidAmount) || 0;
+  if (paidAmount > 0.001) {
+    return res.status(400).json({ success: false, message: `该订单已收款 ${paidAmount} 元，请先处理退款再作废` });
+  }
+
+  // 清理所有关联记录（统计数量用于审计日志）
+  let removedVouchers = 0, removedReturns = 0, removedTracking = 0, removedAllocations = 0, removedLocks = 0;
+
+  if (Array.isArray(data.financeRecords)) {
+    const before = data.financeRecords.length;
+    data.financeRecords = data.financeRecords.filter(r => String(r.relatedOrderId) !== String(order.id));
+    removedVouchers = before - data.financeRecords.length;
+  }
+  if (Array.isArray(data.salesReturns)) {
+    const before = data.salesReturns.length;
+    data.salesReturns = data.salesReturns.filter(r => String(r.salesOrderId) !== String(order.id));
+    removedReturns = before - data.salesReturns.length;
+  }
+  if (Array.isArray(data.orderTrackingRecords)) {
+    const before = data.orderTrackingRecords.length;
+    data.orderTrackingRecords = data.orderTrackingRecords.filter(r => String(r.orderId) !== String(order.id));
+    removedTracking = before - data.orderTrackingRecords.length;
+  }
+  if (Array.isArray(data.allocationRecords)) {
+    const before = data.allocationRecords.length;
+    data.allocationRecords = data.allocationRecords.filter(r => String(r.orderId) !== String(order.id));
+    removedAllocations = before - data.allocationRecords.length;
+  }
+  if (Array.isArray(data.inventoryLocks)) {
+    const before = data.inventoryLocks.length;
+    data.inventoryLocks = data.inventoryLocks.filter(r => String(r.orderId) !== String(order.id));
+    removedLocks = before - data.inventoryLocks.length;
+  }
+
+  data.salesOrders = data.salesOrders.filter(o => String(o.id) !== String(order.id));
+  saveData();
+  logAudit('作废销售单', `销售单 ${order.orderNo}（待处理未收款）已作废删除。清理凭证 ${removedVouchers} 条、退货记录 ${removedReturns} 条、跟踪 ${removedTracking} 条、配货 ${removedAllocations} 条、库存锁 ${removedLocks} 条`, req.user?.name);
+  res.json({ success: true });
+});
+
 // ===== 销售退货 API =====
 app.get('/api/sales-returns', (req, res) => {
   let list = data.salesReturns || [];
@@ -1525,8 +1661,37 @@ app.post('/api/sales-returns', requirePerm('销售管理', '销售退货', '退�
     return res.status(400).json({ success: false, message: '请选择产品并填写正确的退货数量' });
   }
 
+  // 必须关联有效销售订单——退货不能凭空发生
   const salesOrderId = String(req.body.salesOrderId || req.body.orderId || '');
-  const order = data.salesOrders.find(o => String(o.id) === String(salesOrderId));
+  if (!salesOrderId) {
+    return res.status(400).json({ success: false, message: '退货必须关联销售订单' });
+  }
+  const order = data.salesOrders.find(o => String(o.id) === salesOrderId);
+  if (!order) {
+    return res.status(400).json({ success: false, message: '关联的销售订单不存在' });
+  }
+  // 仅已发货/已完成/已审核配货的订单可退货——pending 状态还没发货，不能退
+  const RETURNABLE_STATUS = ['allocated', 'shipped', 'completed'];
+  if (!RETURNABLE_STATUS.includes(order.status)) {
+    return res.status(400).json({ success: false, message: `当前订单状态「${order.status || '未知'}」不允许退货（需已发货/已完成/已审核配货）` });
+  }
+
+  // 原单中该产品的发货数量（按订单明细的 quantity 为准——简化处理；若用 allocationRecords 则更精确）
+  const orderLine = (order.items || []).find(it => String(it.productId) === productId);
+  if (!orderLine) {
+    return res.status(400).json({ success: false, message: `该销售订单中不包含产品 ${productId}` });
+  }
+  const shippedQty = Number(orderLine.quantity) || 0;
+
+  // 同单同产品已退数量——累计，防止超退
+  const returnedQty = (data.salesReturns || [])
+    .filter(r => String(r.salesOrderId) === salesOrderId && String(r.productId) === productId)
+    .reduce((s, r) => s + (Number(r.quantity) || 0), 0);
+
+  if (qty + returnedQty > shippedQty + 0.001) {
+    return res.status(400).json({ success: false, message: `超出可退数量：已发 ${shippedQty}，已退 ${returnedQty}，本次申请退 ${qty}` });
+  }
+
   const product = data.products.find(p => String(p.id) === String(productId));
 
   // 关联订单/产品单价，用于估算退货金额（负值冲减销售收入）
@@ -1763,13 +1928,21 @@ app.delete('/api/purchase-orders/:id', requirePerm('采购管理', '采购订单
   if (!['pending'].includes(order.status)) {
     return res.status(400).json({ success: false, message: '仅待收货的采购单可作废' });
   }
-  // 移除关联的采购支出财务记录
-  if (Array.isArray(data.financeRecords)) {
-    data.financeRecords = data.financeRecords.filter(r => !(r.relatedOrderId === order.id && r.type === 'expense'));
+  // 已付款的 pending 订单禁止作废——需先退款再删除
+  const paidAmount = Number(order.paidAmount) || 0;
+  if (paidAmount > 0.001) {
+    return res.status(400).json({ success: false, message: `该采购单已付款 ${paidAmount} 元，请先处理退款再作废` });
   }
-  data.purchaseOrders = data.purchaseOrders.filter(o => o.id !== order.id);
+  // 清理所有关联凭证（purchase_order / purchase_paid / purchase_return 等）
+  let removedCount = 0;
+  if (Array.isArray(data.financeRecords)) {
+    const before = data.financeRecords.length;
+    data.financeRecords = data.financeRecords.filter(r => String(r.relatedOrderId) !== String(order.id));
+    removedCount = before - data.financeRecords.length;
+  }
+  data.purchaseOrders = data.purchaseOrders.filter(o => String(o.id) !== String(order.id));
   saveData();
-  logAudit('作废采购单', `采购单 ${order.orderNo} 已作废删除`, req.user?.name);
+  logAudit('作废采购单', `采购单 ${order.orderNo}（待收货未付款）已作废删除，同步清理 ${removedCount} 条关联凭证`, req.user?.name);
   res.json({ success: true });
 });
 
@@ -2436,6 +2609,310 @@ app.post('/api/finance-records', requirePerm('财务管理', '财务报表', '�
   data.financeRecords.push(record);
   saveData();
   res.json(record);
+});
+
+// ===== ========= 财务管理：客户预收款 / 退款 / 费用单 / 其他收入 / 内部转账 ===== =====
+// ===== 1. 客户预收款：先收钱后发货，负债类，不影响利润口径（type=''） =====
+app.get('/api/finance/advance-receipts', (req, res) => {
+  let list = data.advanceReceipts || [];
+  if (req.query.customerId) list = list.filter(r => String(r.customerId) === String(req.query.customerId));
+  if (req.query.customerName) list = list.filter(r => (r.customerName || '').includes(String(req.query.customerName)));
+  res.json(list);
+});
+
+app.post('/api/finance/advance-receive', requirePerm('财务管理', '客户预收款', '新增'), (req, res) => {
+  const customerId = String(req.body.customerId || '');
+  const customer = data.customers.find(c => String(c.id) === customerId);
+  if (!customer) return res.status(400).json({ success: false, message: '请选择有效客户' });
+
+  const amount = Number(req.body.amount);
+  if (!(amount > 0)) return res.status(400).json({ success: false, message: '请输入有效的预收金额' });
+
+  const method = String(req.body.method || req.body.payType || '现金');
+  const accountCode = /银行|转账/.test(method) ? '1002 银行存款' : '1001 现金';
+
+  data.financeRecords.push(createFinanceVoucher({
+    type: '',            // 预收款是负债类，尚未确认收入，不走利润口径
+    category: '客户预收款',
+    amount,              // 资金流入，正数
+    date: String(req.body.date || new Date().toISOString().slice(0, 10)),
+    description: `客户 ${customer.name} 预收 ${amount} 元（方式：${method}）`,
+    relatedOrderId: customerId,
+    eventType: 'advance_receive',
+    direction: '收现',
+    accountCode,
+    status: 'received',
+    operator: req.user?.name || ''
+  }));
+
+  const rec = {
+    id: generateId(),
+    receiptNo: generateOrderNo('YSK', data.advanceReceipts, 'receiptNo'),
+    customerId,
+    customerName: customer.name,
+    amount,
+    method,
+    accountCode,
+    remark: String(req.body.remark || ''),
+    operator: req.user ? (req.user.username || '') : '',
+    createdAt: new Date().toISOString()
+  };
+  data.advanceReceipts.push(rec);
+
+  saveData();
+  logAudit('客户预收款', `客户 ${customer.name} 预收 ${amount} 元（方式：${method}）`, req.user?.name);
+  res.json({ success: true, record: rec });
+});
+
+// ===== 2. 客户预收款退款：冲减预收负债，不影响利润（同 type=''，走红冲方向） =====
+app.post('/api/finance/advance-refund', requirePerm('财务管理', '客户预收款', '退款'), (req, res) => {
+  const customerId = String(req.body.customerId || '');
+  const customer = data.customers.find(c => String(c.id) === customerId);
+  if (!customer) return res.status(400).json({ success: false, message: '请选择有效客户' });
+
+  const amount = Number(req.body.amount);
+  if (!(amount > 0)) return res.status(400).json({ success: false, message: '请输入有效的退款金额' });
+
+  // 校验：预收款余额必须 ≥ 退款金额
+  const receipts = (data.advanceReceipts || []).filter(r => String(r.customerId) === customerId);
+  const refunds  = (data.financeRecords  || []).filter(r => r.eventType === 'advance_refund' && String(r.relatedOrderId) === customerId);
+  const paid = receipts.reduce((s, r) => s + (Number(r.amount) || 0), 0);
+  const refunded = refunds.reduce((s, r) => s + Math.abs(Number(r.amount) || 0), 0);
+  const balance = paid - refunded;
+  if (balance + 0.001 < amount) {
+    return res.status(400).json({ success: false, message: `该客户预收款余额不足（当前 ${balance.toFixed(2)}）` });
+  }
+
+  const method = String(req.body.method || req.body.payType || '现金');
+  const accountCode = /银行|转账/.test(method) ? '1002 银行存款' : '1001 现金';
+
+  data.financeRecords.push(createFinanceVoucher({
+    type: '',
+    category: '客户预收款(退款)',
+    amount: -amount,     // 资金流出，红冲预收款
+    date: String(req.body.date || new Date().toISOString().slice(0, 10)),
+    description: `客户 ${customer.name} 预收退款 ${amount} 元（方式：${method}）`,
+    relatedOrderId: customerId,
+    eventType: 'advance_refund',
+    direction: '红冲',
+    accountCode,
+    status: 'returned',
+    operator: req.user?.name || ''
+  }));
+
+  const rec = {
+    id: generateId(),
+    refundNo: generateOrderNo('YSTK', data.advanceReceipts, 'refundNo'),
+    customerId,
+    customerName: customer.name,
+    amount,
+    method,
+    accountCode,
+    remark: String(req.body.remark || ''),
+    operator: req.user ? (req.user.username || '') : '',
+    createdAt: new Date().toISOString()
+  };
+  data.advanceReceipts.push(rec);
+
+  saveData();
+  logAudit('客户预收款退款', `客户 ${customer.name} 退款 ${amount} 元（方式：${method}）`, req.user?.name);
+  res.json({ success: true, record: rec });
+});
+
+// ===== 3. 费用单：影响利润口径（type='expense'），含管理/销售/财务/生产费用四分类 =====
+const EXPENSE_CATEGORIES = ['管理费用', '销售费用', '财务费用', '生产费用'];
+const EXPENSE_ACCOUNT_MAP = {
+  '管理费用': '6602 管理费用',
+  '销售费用': '6601 销售费用',
+  '财务费用': '6603 财务费用',
+  '生产费用': '5101 制造费用'
+};
+app.get('/api/finance/expenses', (req, res) => {
+  let list = data.expenseForms || [];
+  if (req.query.category) list = list.filter(r => r.category === String(req.query.category));
+  if (req.query.dateFrom) {
+    const df = String(req.query.dateFrom);
+    list = list.filter(r => String(r.date || '').slice(0, 10) >= df);
+  }
+  if (req.query.dateTo) {
+    const dt = String(req.query.dateTo);
+    list = list.filter(r => String(r.date || '').slice(0, 10) <= dt);
+  }
+  res.json(list);
+});
+
+app.post('/api/finance/expenses', requirePerm('财务管理', '费用单', '添加'), (req, res) => {
+  const amount = Number(req.body.amount);
+  if (!(amount > 0)) return res.status(400).json({ success: false, message: '请输入有效的费用金额' });
+
+  const category = String(req.body.category || '管理费用');
+  if (!EXPENSE_CATEGORIES.includes(category)) {
+    return res.status(400).json({ success: false, message: `费用分类无效（允许：${EXPENSE_CATEGORIES.join('/')}）` });
+  }
+
+  const method = String(req.body.method || req.body.payType || '现金');
+  const cashCode = /银行|转账/.test(method) ? '1002 银行存款' : '1001 现金';
+  const expenseCode = EXPENSE_ACCOUNT_MAP[category];
+
+  data.financeRecords.push(createFinanceVoucher({
+    type: 'expense',                    // 费用类，走利润口径
+    category,
+    amount: -amount,                    // 支出为负值，方向明确
+    date: String(req.body.date || new Date().toISOString().slice(0, 10)),
+    description: String(req.body.description || req.body.remark || `${category} ${amount} 元（方式：${method}）`),
+    relatedOrderId: '',
+    eventType: 'expense_form',
+    direction: '费用支出',
+    accountCode: expenseCode,
+    status: 'created',
+    operator: req.user?.name || ''
+  }));
+
+  const form = {
+    id: generateId(),
+    expenseNo: generateOrderNo('FY', data.expenseForms, 'expenseNo'),
+    category,
+    amount,
+    method,
+    cashCode,
+    accountCode: expenseCode,
+    description: String(req.body.description || req.body.remark || ''),
+    department: String(req.body.department || ''),
+    operator: req.user ? (req.user.username || '') : '',
+    createdAt: new Date().toISOString()
+  };
+  data.expenseForms.push(form);
+
+  saveData();
+  logAudit('费用单', `${category} ${amount} 元（方式：${method}）`, req.user?.name);
+  res.json({ success: true, record: form });
+});
+
+// ===== 4. 其他收入：影响利润口径（type='income'），非销售收入类 =====
+app.get('/api/finance/other-incomes', (req, res) => {
+  let list = data.otherIncomes || [];
+  if (req.query.category) list = list.filter(r => r.category === String(req.query.category));
+  res.json(list);
+});
+
+app.post('/api/finance/other-income', requirePerm('财务管理', '其他收入', '添加'), (req, res) => {
+  const amount = Number(req.body.amount);
+  if (!(amount > 0)) return res.status(400).json({ success: false, message: '请输入有效的收入金额' });
+
+  const category = String(req.body.category || '其他收入');
+  if (!['其他收入', '营业外收入', '投资收益'].includes(category)) {
+    return res.status(400).json({ success: false, message: '收入分类无效' });
+  }
+
+  const method = String(req.body.method || req.body.payType || '现金');
+  const accountCode = /银行|转账/.test(method) ? '1002 银行存款' : '1001 现金';
+
+  data.financeRecords.push(createFinanceVoucher({
+    type: 'income',
+    category,
+    amount,
+    date: String(req.body.date || new Date().toISOString().slice(0, 10)),
+    description: String(req.body.description || req.body.remark || `${category} ${amount} 元（方式：${method}）`),
+    relatedOrderId: '',
+    eventType: 'other_income',
+    direction: '收现',
+    accountCode,
+    status: 'received',
+    operator: req.user?.name || ''
+  }));
+
+  const rec = {
+    id: generateId(),
+    incomeNo: generateOrderNo('OISR', data.otherIncomes, 'incomeNo'),
+    category,
+    amount,
+    method,
+    accountCode,
+    description: String(req.body.description || req.body.remark || ''),
+    operator: req.user ? (req.user.username || '') : '',
+    createdAt: new Date().toISOString()
+  };
+  data.otherIncomes.push(rec);
+
+  saveData();
+  logAudit('其他收入', `${category} ${amount} 元（方式：${method}）`, req.user?.name);
+  res.json({ success: true, record: rec });
+});
+
+// ===== 5. 内部转账：资产类内部划转，不影响利润（双凭证同 transferId，一正一负） =====
+const TRANSFER_METHODS = ['现金', '银行', '支付宝', '微信', '其他'];
+app.get('/api/finance/transfers', (req, res) => {
+  let list = data.internalTransfers || [];
+  if (req.query.fromAccount) list = list.filter(r => r.fromAccount === String(req.query.fromAccount));
+  if (req.query.toAccount) list = list.filter(r => r.toAccount === String(req.query.toAccount));
+  res.json(list);
+});
+
+app.post('/api/finance/transfers', requirePerm('财务管理', '内部转账', '新增'), (req, res) => {
+  const amount = Number(req.body.amount);
+  if (!(amount > 0)) return res.status(400).json({ success: false, message: '请输入有效的转账金额' });
+
+  const fromAccount = String(req.body.fromAccount || '');
+  const toAccount = String(req.body.toAccount || '');
+  if (!fromAccount || !toAccount || fromAccount === toAccount) {
+    return res.status(400).json({ success: false, message: '请选择不同的转出/转入账户' });
+  }
+  if (!TRANSFER_METHODS.includes(fromAccount) || !TRANSFER_METHODS.includes(toAccount)) {
+    return res.status(400).json({ success: false, message: '账户类型无效' });
+  }
+
+  const accountOf = (m) => /银行/.test(m) ? '1002 银行存款' : '1001 现金';
+  const fromCode = accountOf(fromAccount);
+  const toCode   = accountOf(toAccount);
+
+  const transferId = generateId();
+
+  // 转出：负方向
+  data.financeRecords.push(createFinanceVoucher({
+    type: '',
+    category: '内部转账',
+    amount: -amount,
+    date: String(req.body.date || new Date().toISOString().slice(0, 10)),
+    description: `内部转账 ${fromAccount} → ${toAccount} ${amount} 元`,
+    relatedOrderId: transferId,
+    eventType: 'internal_transfer',
+    direction: '转出',
+    accountCode: fromCode,
+    status: 'transferred',
+    operator: req.user?.name || ''
+  }));
+  // 转入：正方向
+  data.financeRecords.push(createFinanceVoucher({
+    type: '',
+    category: '内部转账',
+    amount,
+    date: String(req.body.date || new Date().toISOString().slice(0, 10)),
+    description: `内部转账 ${fromAccount} → ${toAccount} ${amount} 元`,
+    relatedOrderId: transferId,
+    eventType: 'internal_transfer',
+    direction: '转入',
+    accountCode: toCode,
+    status: 'transferred',
+    operator: req.user?.name || ''
+  }));
+
+  const rec = {
+    id: transferId,
+    transferNo: generateOrderNo('ZZ', data.internalTransfers, 'transferNo'),
+    fromAccount,
+    fromCode,
+    toAccount,
+    toCode,
+    amount,
+    remark: String(req.body.remark || ''),
+    operator: req.user ? (req.user.username || '') : '',
+    createdAt: new Date().toISOString()
+  };
+  data.internalTransfers.push(rec);
+
+  saveData();
+  logAudit('内部转账', `${fromAccount} → ${toAccount} ${amount} 元`, req.user?.name);
+  res.json({ success: true, record: rec });
 });
 
 app.get('/api/product-spec-prices', (req, res) => {
